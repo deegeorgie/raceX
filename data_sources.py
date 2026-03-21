@@ -5,9 +5,7 @@ Provides a unified interface for scraping race data from different sources.
 
 from abc import ABC, abstractmethod
 import pandas as pd
-from model_functions import flat_race, get_trot_race
-from flat_zone import scrape_zone_turf as scrape_zone_turf_flat
-from zone_trot import scrape_zone_turf_trot
+from model_functions import get_trot_race
 
 
 class RaceDataSource(ABC):
@@ -34,11 +32,15 @@ class ZoneTurfDataSource(RaceDataSource):
     def scrape_flat(self, url, progress_callback=None, cancel_check=None):
         """Scrape flat races from zone-turf"""
         print(f"[INFO] Scraping flat races from {self.name}: {url}")
+        # Lazy import to avoid optional selenium deps on app startup.
+        from flat_zone import scrape_zone_turf as scrape_zone_turf_flat
         return scrape_zone_turf_flat(url, progress_callback=progress_callback, cancel_check=cancel_check)
     
     def scrape_trot(self, url, progress_callback=None, cancel_check=None):
         """Scrape trot races from zone-turf"""
         print(f"[INFO] Scraping trot races from {self.name}: {url}")
+        # Lazy import to avoid optional selenium deps on app startup.
+        from zone_trot import scrape_zone_turf_trot
         return scrape_zone_turf_trot(url, progress_callback=progress_callback, cancel_check=cancel_check)
 
 
