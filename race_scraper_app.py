@@ -8,13 +8,42 @@ French text and Unicode support enabled
 import sys
 import sqlite3
 from datetime import datetime
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
-                             QWidget, QPushButton, QLineEdit, QTableWidget, 
-                             QTableWidgetItem, QTabWidget, QLabel, QProgressBar,
-                             QMessageBox, QComboBox, QScrollArea, QSlider, QDialog, QDialogButtonBox, QSpinBox, QFileDialog, QSplashScreen,
-                             QListWidget, QListWidgetItem, QDoubleSpinBox, QSizePolicy, QCheckBox, QGroupBox, QTextEdit, QAction, QDateEdit)
-from PyQt5.QtCore import QThread, pyqtSignal, Qt, QSettings, QDate, QDateTime
-from PyQt5.QtGui import QFont, QColor, QPixmap, QIcon
+
+# PyQt5 is only required for the desktop GUI. Streamlit imports this module for
+# shared scraping logic, so keep PyQt5 optional to avoid import-time failures.
+try:
+    from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
+                                 QWidget, QPushButton, QLineEdit, QTableWidget,
+                                 QTableWidgetItem, QTabWidget, QLabel, QProgressBar,
+                                 QMessageBox, QComboBox, QScrollArea, QSlider, QDialog, QDialogButtonBox, QSpinBox, QFileDialog, QSplashScreen,
+                                 QListWidget, QListWidgetItem, QDoubleSpinBox, QSizePolicy, QCheckBox, QGroupBox, QTextEdit, QAction, QDateEdit)
+    from PyQt5.QtCore import QThread, pyqtSignal, Qt, QSettings, QDate, QDateTime
+    from PyQt5.QtGui import QFont, QColor, QPixmap, QIcon
+    PYQT_AVAILABLE = True
+    _PYQT_IMPORT_ERROR = None
+except Exception as _e:
+    PYQT_AVAILABLE = False
+    _PYQT_IMPORT_ERROR = _e
+
+    def _pyqt_unavailable(*_args, **_kwargs):
+        raise ImportError("PyQt5 is required for the desktop GUI but is not installed.")
+
+    class _PyQtBase:
+        def __init__(self, *_args, **_kwargs):
+            _pyqt_unavailable()
+
+    # Minimal stubs to allow module import when PyQt5 is missing.
+    QApplication = QMainWindow = QVBoxLayout = QHBoxLayout = QWidget = QPushButton = QLineEdit = _PyQtBase
+    QTableWidget = QTableWidgetItem = QTabWidget = QLabel = QProgressBar = QMessageBox = _PyQtBase
+    QComboBox = QScrollArea = QSlider = QDialog = QDialogButtonBox = QSpinBox = QFileDialog = _PyQtBase
+    QSplashScreen = QListWidget = QListWidgetItem = QDoubleSpinBox = QSizePolicy = QCheckBox = _PyQtBase
+    QGroupBox = QTextEdit = QAction = QDateEdit = _PyQtBase
+    QThread = Qt = QSettings = QDate = QDateTime = _PyQtBase
+
+    def pyqtSignal(*_args, **_kwargs):
+        return None
+
+    QFont = QColor = QPixmap = QIcon = _PyQtBase
 import pandas as pd
 import numpy as np
 from data_sources import data_source_manager
