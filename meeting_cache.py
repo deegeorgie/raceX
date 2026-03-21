@@ -7,7 +7,12 @@ import json
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
-from PyQt5.QtCore import QDate
+try:
+    from PyQt5.QtCore import QDate
+    QDATE_AVAILABLE = True
+except Exception:
+    QDate = None
+    QDATE_AVAILABLE = False
 
 
 def get_cache_dir():
@@ -28,7 +33,7 @@ def get_cache_file():
 
 def get_cache_date_key(date_qdate):
     """Convert QDate to cache key format (YYYY-MM-DD)."""
-    if isinstance(date_qdate, QDate):
+    if QDATE_AVAILABLE and isinstance(date_qdate, QDate):
         return date_qdate.toString('yyyy-MM-dd')
     return str(date_qdate)
 
