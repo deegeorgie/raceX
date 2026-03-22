@@ -47,14 +47,19 @@ except Exception as _e:
 import pandas as pd
 import numpy as np
 from data_sources import data_source_manager
- # Lazy import of Qt heatmap helpers inside GUI methods to avoid Streamlit startup deps.
+ 
 from favorable_cordes import compute_favorable_corde_horses
 from race_stats_function import compute_race_statistics
 from meeting_cache import get_cached_meetings, cache_meetings
 import matplotlib
 import random
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+try:
+    from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+    _QT_MPL_AVAILABLE = True
+except Exception:
+    FigureCanvas = None
+    _QT_MPL_AVAILABLE = False
 from collections import Counter
 import itertools
 import re
@@ -2761,7 +2766,7 @@ def compute_composite_score(race_df, weights=None):
                 print(f"[DEBUG] Full score distribution: {weighted.value_counts().to_dict()}")
         
         result = race_df.copy()
-        # Ensure canonical 'Cheval' column exists for downstream code (heatmap, tables)
+        # Ensure canonical 'Cheval' column exists for downstream tables
         cheval_col = 'CHEVAL' if 'CHEVAL' in race_df.columns else ('Cheval' if 'Cheval' in race_df.columns else None)
         if cheval_col:
             try:
@@ -2772,7 +2777,7 @@ def compute_composite_score(race_df, weights=None):
             # Fallback: create Cheval from index
             result['Cheval'] = result.index.astype(str)
         result['Composite'] = weighted
-        # expose computed normalized Corde/Age/Sex scores if available for downstream display/heatmap
+        # expose computed normalized Corde/Age/Sex scores if available for downstream display
         try:
             if 'Corde' in norm.columns:
                 result['Corde'] = norm['Corde'].values
@@ -2814,7 +2819,7 @@ def compute_composite_score(race_df, weights=None):
             elif 'Cote' in race_df.columns:
                 result['Cote'] = race_df['Cote']
 
-        # Add individual metric columns from norm table (for heatmap)
+        # Add individual metric columns from norm table
         for metric in ['IF', 'IC', 'S_COEFF', 'n_weight', 'VALEUR']:
             if metric in norm.columns:
                 result[metric] = norm[metric].values
@@ -2826,83 +2831,6 @@ def compute_composite_score(race_df, weights=None):
     except Exception as e:
         print(f"Error computing composite score: {e}")
         return pd.DataFrame()
-
-def create_heatmap_canvas(norm_df, composite_scores=None):
-    """Create a matplotlib FigureCanvas heatmap from a normalized DataFrame (horses x metrics).
-    
-    Args:
-        norm_df: DataFrame with horses as index and metrics as columns (values 0-1)
-        composite_scores: Series with horse names as index and composite scores (optional, for sorting)
-    """
-    try:
-        if norm_df.empty:
-            fig = plt.figure(figsize=(4,3))
-            return FigureCanvas(fig)
-
-        # Sort by composite score if provided
-        if composite_scores is not None:
-            # Get horses in composite order
-            sorted_horses = composite_scores.index.tolist()
-            norm_df = norm_df.loc[[h for h in sorted_horses if h in norm_df.index]]
-
-        # Dynamic sizing: taller for more horses
-        num_horses = len(norm_df.index)
-        fig_height = max(3, 0.5 * num_horses)
-        fig, ax = plt.subplots(figsize=(8, fig_height))
-        
-        # Create heatmap with RdYlGn colormap
-        im = ax.imshow(norm_df.values, aspect='auto', cmap='RdYlGn', vmin=0, vmax=1)
-        
-        # Configure axes
-        ax.set_xticks(range(len(norm_df.columns)))
-        ax.set_xticklabels(norm_df.columns, rotation=45, ha='right', fontsize=10, fontweight='bold')
-        ax.set_yticks(range(len(norm_df.index)))
-        ax.set_yticklabels(norm_df.index, fontsize=9, fontweight='bold')
-        
-        # Add gridlines for clarity
-        ax.set_xticks([x - 0.5 for x in range(1, len(norm_df.columns))], minor=True)
-        ax.set_yticks([y - 0.5 for y in range(1, len(norm_df.index))], minor=True)
-        ax.grid(which='minor', color='white', linestyle='-', linewidth=1.5)
-        
-        # Add text annotations (normalized values)
-        for i in range(len(norm_df.index)):
-            for j in range(len(norm_df.columns)):
-                val = norm_df.values[i, j]
-                # Color text based on cell value for contrast
-                text_color = 'white' if val < 0.5 else 'black'
-                ax.text(j, i, f'{val:.2f}', ha='center', va='center', 
-                       color=text_color, fontsize=8, fontweight='bold')
-        
-        # Enhanced colorbar
-        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label('Strength (0=Low, 1=High)', fontsize=10, fontweight='bold')
-        
-        # Title and layout
-        ax.set_title('Heatmap des performances des chevaux\n(triee par score composite)', 
-                    fontsize=12, fontweight='bold', pad=15)
-        fig.tight_layout()
-        
-        canvas = FigureCanvas(fig)
-        try:
-            plt.close(fig)
-        except Exception:
-            pass
-        # Wrap canvas in a container widget for consistent parenting
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(canvas)
-        return container
-    except Exception as e:
-        print(f"Error creating heatmap: {e}")
-        fig = plt.figure(figsize=(4,3))
-        return FigureCanvas(fig)
-
-
-def create_interactive_heatmap_widget(norm_df, composite_scores=None, parent=None, on_metric_toggle=None):
-    """Wrapper that uses the Matplotlib-based interactive heatmap."""
-    from heatmap_matplotlib_interactive import create_interactive_matplotlib_heatmap
-    return create_interactive_matplotlib_heatmap(norm_df, composite_scores, parent, on_metric_toggle=on_metric_toggle)
 
 class ScraperThread(QThread):
     finished = pyqtSignal(pd.DataFrame, str, str, str)  # df, race_type, source, custom_table
@@ -3099,14 +3027,6 @@ class TrottingAnalysisWindow(BaseAnalysisWindow):
             if composite_df is not None and not composite_df.empty:
                 composite_widget = self.create_analysis_tab(composite_df, "Composite Score")
                 self.tab_widget.addTab(composite_widget, "📊 Composite")
-                # Trotting-specific heatmap (next to composite)
-                heatmap_widget = self.display_heatmap()
-                if heatmap_widget is not None:
-                    try:
-                        self.tab_widget.addTab(heatmap_widget, "🔥 Heatmap")
-                    except Exception:
-                        # fallback: ignore heatmap if widget incompatible
-                        pass
                 # Summary / Prognosis / Exclusives tab with special formatting
                 try:
                     summary_df = analyze_trotting_summary_prognosis(self.filtered_df, composite_df)
@@ -3374,174 +3294,6 @@ class TrottingAnalysisWindow(BaseAnalysisWindow):
         
         widget.setLayout(layout)
         return widget
-
-    def display_heatmap(self):
-        """
-        Prepare trotting-specific normalized metrics and return an interactive heatmap widget.
-        Metrics included (if present): FA, FM, REC., avg_rank, recent_avg_rank,
-        trend_rank_slope, S_COEFF, COTE, disq_harness_rate/disq_mounted_rate.
-        Values are normalized to 0..1 where higher = better.
-        """
-        try:
-            from pandas import DataFrame
-            # Build composite scores mapping if available
-            composite_df = self.compute_trotting_composite()
-            composite_scores = None
-            if composite_df is not None and not composite_df.empty and 'CHEVAL' in composite_df.columns:
-                # composite_df index might not be horse names; ensure index is horse name
-                if 'CHEVAL' in composite_df.columns:
-                    composite_scores = composite_df.set_index('CHEVAL')['Composite']
-                elif 'CHEVAL' in self.filtered_df.columns:
-                    composite_scores = composite_df.set_index(self.filtered_df['CHEVAL'])['Composite']
-
-            df = self.filtered_df.copy()
-            if df is None or df.empty:
-                return QWidget()
-
-            # Determine horse name column
-            horse_col = None
-            for c in ('CHEVAL', 'Cheval', 'NAME', 'Nom'):
-                if c in df.columns:
-                    horse_col = c
-                    break
-            if horse_col is None:
-                df['CHEVAL'] = df.index.astype(str)
-                horse_col = 'CHEVAL'
-
-            metrics = []
-            candidate_cols = ['FA', 'FM', 'REC.', 'REC', 'avg_rank', 'recent_avg_rank', 'recent_avg', 'trend_rank_slope', 'trend_slope', 'S_COEFF', 's_COEFF', 'COTE', 'Cote', 'disq_harness_rate', 'disq_mounted_rate']
-            for col in candidate_cols:
-                if col in df.columns and col not in metrics:  # Check for duplicates
-                    metrics.append(col)
-
-            # If no explicit candidate columns found, search columns by keyword patterns
-            if not metrics:
-                patterns = ['fa', 'fm', 'rec', 'avg_rank', 'recent', 'trend', 's_coeff', 'cote', 'disq', 'dq']
-                for c in df.columns:
-                    low = c.lower()
-                    for p in patterns:
-                        if p in low and c not in metrics:  # Ensure no duplicates
-                            metrics.append(c)
-                            break
-
-            print(f"[DEBUG] display_heatmap: horse_col={horse_col}, found_metrics={metrics}")
-            if not metrics:
-                print("[DEBUG] No metrics found for heatmap; available columns:\n", list(df.columns))
-                return QWidget()
-
-            # Build matrix: rows=horse names, cols=metrics
-            mat = {}
-            for col in metrics:
-                # Show sample raw values for debugging
-                try:
-                    sample_vals = df[col].astype(str).head(5).tolist()
-                except Exception:
-                    sample_vals = []
-                print(f"[DEBUG] Metric candidate '{col}' sample values: {sample_vals}")
-
-                # Robust cleaning FIRST: handle common string formats like '1,23', '3.4%', or embedded text
-                try:
-                    col_data = df[col]
-                    print(f"[DEBUG] Column '{col}' dtype={col_data.dtype}, first 3 raw values: {col_data.head(3).tolist()}")
-                    # Convert to string, replace comma decimal separators, extract first numeric token
-                    tmp = col_data.astype(str).str.strip().str.replace(',', '.')
-                    print(f"[DEBUG] After string conversion & replace, first 3 values: {tmp.head(3).tolist()}")
-                    # Extract numeric part (handles percentages, trailing text)
-                    nums = tmp.str.extract(r'(-?\d+\.?\d*)', expand=False)
-                    print(f"[DEBUG] After regex extract, first 3 values: {nums.head(3).tolist()}")
-                    ser = pd.to_numeric(nums, errors='coerce')
-                    print(f"[DEBUG] After pd.to_numeric for '{col}': non-null count={ser.count()}, min={ser.min()}, max={ser.max()}")
-                except Exception as e:
-                    print(f"[DEBUG] Robust parsing failed for '{col}': {e}")
-                    import traceback
-                    traceback.print_exc()
-                    ser = pd.to_numeric(df[col], errors='coerce')
-                    print(f"[DEBUG] After fallback direct conversion '{col}': non-null count={ser.count()}, min={ser.min()}, max={ser.max()}")
-                
-                # **CRITICAL FIX**: Set the index to horse names so DataFrame alignment works
-                ser.index = df[horse_col].astype(str)
-                mat[col] = ser
-
-            mat_df = pd.DataFrame(mat)  # All Series already have the correct index (horse names)
-
-            # **FILTER OUT EMPTY COLUMNS**: Remove any metric with zero non-null values
-            mat_df = mat_df.dropna(axis=1, how='all')  # Drop columns that are all NaN
-            print(f"[DEBUG] After removing all-NaN columns: {mat_df.columns.tolist()}")
-            
-            # **HEATMAP ONLY**: Append horse numbers to index for display
-            # Build horse_name -> horse_num mapping BEFORE processing
-            num_col_for_heatmap = 'N°' if 'N°' in df.columns else ('N' if 'N' in df.columns else None)
-            horse_num_map = {}
-            if num_col_for_heatmap:
-                for _, row in df.iterrows():
-                    h_name = str(row.get(horse_col, '')).strip()
-                    h_num = row.get(num_col_for_heatmap)
-                    if h_name and h_num and pd.notna(h_num):
-                        horse_num_map[h_name] = str(h_num)
-            
-            # Now append numbers to index
-            if horse_num_map:
-                new_index = [f"{name} (N°{horse_num_map.get(name, name)})" if name in horse_num_map else name 
-                            for name in mat_df.index]
-                mat_df.index = new_index
-
-            # Debug: Print mat_df structure
-            print(f"[DEBUG] mat_df shape: {mat_df.shape}")
-            print(f"[DEBUG] mat_df columns: {mat_df.columns.tolist()}")
-            print(f"[DEBUG] mat_df dtypes:\n{mat_df.dtypes}")
-            print(f"[DEBUG] mat_df sample (first 3 rows, first 3 cols):\n{mat_df.iloc[:3, :3] if mat_df.shape[1] >= 3 else mat_df.head(3)}")
-            print(f"[DEBUG] mat_df non-null counts:\n{mat_df.count()}")
-
-            # Normalize columns to 0..1 with higher better
-            norm_df = DataFrame(index=mat_df.index)
-            for col in mat_df.columns:
-                col_series = mat_df[col].copy()
-                print(f"[DEBUG] Processing column '{col}': type={col_series.dtype}, non-null count before={col_series.count()}, values: {col_series.head(3).tolist()}")
-                # Define whether higher is better
-                higher_better = True
-                if col in ('FA', 'FM', 'REC.', 'avg_rank', 'recent_avg_rank'):
-                    higher_better = False
-                if col in ('trend_rank_slope',):
-                    # negative slope is better -> invert sign
-                    col_series = -col_series
-                    higher_better = True
-                if col in ('disq_harness_rate', 'disq_mounted_rate'):
-                    higher_better = False
-
-                # Convert to numeric and fillna with median
-                # At this point col_series should be numeric or NaN
-                if col_series.dropna().empty:
-                    print(f"[DEBUG] Heatmap metric '{col}' has no numeric values after parsing")
-                    norm_df[col] = 0.5
-                    continue
-                mn = col_series.min()
-                mx = col_series.max()
-                # Log range for debugging
-                try:
-                    print(f"[DEBUG] Heatmap metric '{col}': count={col_series.count()}, min={mn}, max={mx}")
-                except Exception:
-                    pass
-                if pd.isna(mn) or pd.isna(mx) or mx == mn:
-                    # No variation -> use neutral 0.5 but keep consistent numeric dtype
-                    norm = pd.Series(0.5, index=col_series.index)
-                else:
-                    norm = (col_series - mn) / (mx - mn)
-                # If lower is better, invert
-                if not higher_better:
-                    norm = 1.0 - norm
-                # Fill NaNs with 0.5
-                norm = norm.fillna(0.5)
-                norm_df[col] = norm
-                print(f"[DEBUG] Normalized metric '{col}': sample values={norm.head(5).tolist()}")
-
-            # Use create_interactive_heatmap_widget to build the widget
-            heatmap_widget = create_interactive_heatmap_widget(norm_df, composite_scores, parent=self)
-            return heatmap_widget
-        except Exception as e:
-            print(f"[ERROR] Failed to build trotting heatmap: {e}")
-            import traceback
-            traceback.print_exc()
-            return QWidget()
 
 
 class BetGeneratorWindow(QMainWindow):
@@ -5151,7 +4903,7 @@ class RaceScraperApp(QMainWindow):
             }
         """)
 
-        # --- Summary tab (composite + heatmap) ---
+        # --- Summary tab (composite) ---
         self.summary_widget = QWidget()
         s_layout = QHBoxLayout(self.summary_widget)
         self.composite_table = QTableWidget()
@@ -5170,44 +4922,7 @@ class RaceScraperApp(QMainWindow):
         # Note: Not added to UI - only for internal use by generate_bets()
         print("[DEBUG] RaceScraperApp: Created self.bets_table for bet generation")
 
-        # Scrollable heatmap container with expand button
-        heatmap_widget = QWidget()
-        heatmap_layout = QVBoxLayout(heatmap_widget)
-        heatmap_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Top bar: expand button + external heatmap controls
-        top_bar = QWidget()
-        top_bar_layout = QHBoxLayout(top_bar)
-        top_bar_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Bouton pour deverrouiller le heatmap en plein ecran/nouvelle fenetre
-        expand_btn = QPushButton("👁️  View Heatmap (Partants)")
-        expand_btn.setMaximumHeight(30)
-        expand_btn.setStyleSheet("background-color: #3498db; color: white; font-weight: bold; border-radius: 4px;")
-        expand_btn.clicked.connect(self.show_heatmap_fullscreen)
-        top_bar_layout.addWidget(expand_btn)
-
-        # Create external controls widget (will be populated with columns when data is available)
-        try:
-            from heatmap_matplotlib_interactive import create_heatmap_controls
-            self.heatmap_controls_widget, self.heatmap_controls_dict = create_heatmap_controls(parent=self)
-            top_bar_layout.addWidget(self.heatmap_controls_widget, 1)
-        except Exception:
-            self.heatmap_controls_widget = None
-            self.heatmap_controls_dict = None
-
-        heatmap_layout.addWidget(top_bar)
-        
-        # Scrollable canvas area
-        self.summary_canvas_scroll = QScrollArea()
-        self.summary_canvas_scroll.setWidgetResizable(True)
-        self.summary_canvas_container = QWidget()
-        self.summary_canvas_layout = QVBoxLayout(self.summary_canvas_container)
-        self.summary_canvas_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
-        self.summary_canvas_scroll.setWidget(self.summary_canvas_container)
-        heatmap_layout.addWidget(self.summary_canvas_scroll, 1)
-        
-        s_layout.addWidget(heatmap_widget, 2)
+        s_layout.addStretch(2)
 
         analysis_tabs.addTab(self.summary_widget, "📋 Synthese")
 
@@ -7379,7 +7094,7 @@ class RaceScraperApp(QMainWindow):
                 # Re-apply filters to refresh analysis with updated odds
                 try:
                     self.apply_filters()
-                    # If analysis is visible, refresh composite/heatmap with new odds
+        # If analysis is visible, refresh composite with new odds
                     if hasattr(self, 'last_filtered_df') and self.last_filtered_df is not None and self.analysis_widget.isVisible():
                         self.refresh_composite_and_heatmap(self.last_filtered_df)
                         
@@ -7813,8 +7528,6 @@ class RaceScraperApp(QMainWindow):
             self.status_label.setText(f"{len(self.full_df)} Entrees chargees depuis la base de donnees")
         # Hide analysis when filters are cleared
         self.analysis_widget.setVisible(False)
-        # Reset heatmap race key so next filter will trigger refresh
-        self._last_heatmap_race_key = None
         # Clear remembered filtered df
         try:
             self.last_filtered_df = None
@@ -8092,59 +7805,9 @@ class RaceScraperApp(QMainWindow):
         except Exception:
             pass
     
-    def show_heatmap_fullscreen(self):
-        """Open the heatmap in a larger fullscreen dialog window."""
-        if not hasattr(self, 'current_heatmap_data') or self.current_heatmap_data is None:
-            QMessageBox.warning(self, "Avertissement", "Aucune donnee heatmap disponible")
-            return
-        
-        try:
-            norm_df, composite_scores = self.current_heatmap_data
-            
-            # Get REF_COURSE from current filtered data
-            ref_course = ""
-            if hasattr(self, 'last_filtered_df') and self.last_filtered_df is not None and not self.last_filtered_df.empty:
-                if 'REF_COURSE' in self.last_filtered_df.columns:
-                    ref_course = str(self.last_filtered_df['REF_COURSE'].iloc[0])
-            
-            # Create dialog and store as instance variable to prevent garbage collection
-            self.heatmap_dialog = QMainWindow()
-            title = f"[TARGET] Heatmap for {ref_course} - Full View" if ref_course else "[TARGET] Heatmap - Full View"
-            self.heatmap_dialog.setWindowTitle(title)
-            self.heatmap_dialog.setGeometry(100, 100, 1400, 900)
-            
-            # Create interactive heatmap widget (Plotly) at higher quality/size
-            try:
-                from heatmap_matplotlib_interactive import create_interactive_matplotlib_heatmap
-                widget = create_interactive_matplotlib_heatmap(norm_df, composite_scores, parent=self, external_controls=getattr(self, 'heatmap_controls_dict', None), on_metric_toggle=self.on_heatmap_metric_toggle)
-            except Exception:
-                widget = create_heatmap_canvas(norm_df, composite_scores)
-            self.heatmap_dialog.setCentralWidget(widget)
-            self.heatmap_dialog.raise_()  # Bring window to front
-            self.heatmap_dialog.activateWindow()  # Give focus to window
-            self.heatmap_dialog.show()
-            
-        except Exception as e:
-            print(f"Heatmap error: {e}")
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Erreur", f"Impossible d'afficher le heatmap : {e}")
-
-    def on_heatmap_metric_toggle(self, metric_name, is_checked):
-        """Callback when a metric checkbox is toggled in the heatmap.
-        Triggers re-sort and re-render based on selected metrics.
-        Currently just allows render_plot() in heatmap to handle the visual update.
-        """
-        try:
-            print(f"[DEBUG] Metric '{metric_name}' toggled: {'checked' if is_checked else 'unchecked'}")
-            # The heatmap's render_plot() will be called automatically after this returns
-            # No additional recomputation needed - just let the visualization update
-        except Exception as e:
-            print(f"[ERROR] on_heatmap_metric_toggle failed: {e}")
-
     def refresh_composite_and_heatmap(self, filtered_df):
-        """Recompute composite scores and heatmap using current UI weights (including corde slider).
-        Updates `self.current_composite_df`, `self.current_heatmap_data`, and UI widgets.
+        """Recompute composite scores using current UI weights (including corde slider).
+        Updates `self.current_composite_df` and UI widgets.
         """
         print(f"[DEBUG] refresh_composite_and_heatmap called with df_len={len(filtered_df) if filtered_df is not None else 'None'}")
         try:
@@ -8165,189 +7828,8 @@ class RaceScraperApp(QMainWindow):
             else:
                 self.populate_analysis_table(self.composite_table, composite_df)
 
-                # Build normalized matrix for heatmap using metric list (include COTE but exclude AgeScore/SexScore)
-                # Prefer pre-normalized values from composite_df or use direct computation from filtered_df
-                metric_candidates = ['IF','IC','S_COEFF','n_weight','N_WEIGHT','VALEUR','Valeur','Corde','CORDE','COTE','Cote']
-                metric_cols = []
-                for c in metric_candidates:
-                    if c in composite_df.columns or c in ['Corde']:
-                        metric_cols.append(c)
-                # Deduplicate while preserving order
-                seen = set()
-                metric_cols = [x for x in metric_cols if not (x in seen or seen.add(x))]
-
-                if metric_cols:
-                    # Get horse name column from filtered_df for proper alignment
-                    cheval_col = 'Cheval' if 'Cheval' in filtered_df.columns else ('CHEVAL' if 'CHEVAL' in filtered_df.columns else None)
-                    if not cheval_col:
-                        print("[DEBUG] No horse name column found, using composite_df['Cheval']")
-                        cheval_col = 'Cheval'
-                    
-                    # Create norm_df with filtered_df horse names as temporary index for proper alignment
-                    filtered_horses = filtered_df[cheval_col].astype(str).values
-                    temp_norm_df = pd.DataFrame(index=filtered_horses)
-                    
-                    for col in metric_cols:
-                        # PRIORITY: Use pre-normalized columns from filtered_df if available
-                        if f'_norm_{col}' in filtered_df.columns:
-                            # Use pre-normalized values (already inverted and scaled 0-1 per race)
-                            ser = filtered_df[f'_norm_{col}']
-                        elif col == 'Corde':
-                            ser = compute_corde_score(filtered_df)
-                        elif col in ['COTE', 'Cote']:
-                            # COTE handling: lower odds = better (market confidence)
-                            if 'COTE' in filtered_df.columns:
-                                ser = pd.to_numeric(filtered_df['COTE'], errors='coerce')
-                            elif 'Cote' in filtered_df.columns:
-                                ser = pd.to_numeric(filtered_df['Cote'], errors='coerce')
-                            else:
-                                ser = pd.Series([0]*len(filtered_df))
-                            # Invert: lower odds = better
-                            if not ser.dropna().empty and ser.dropna().max() != ser.dropna().min():
-                                ser = -ser
-                        else:
-                            # Fallback: compute normalization on-the-fly
-                            ser = pd.to_numeric(filtered_df[col], errors='coerce') if col in filtered_df.columns else pd.Series([0]*len(filtered_df))
-                            # For metrics where lower is better, invert before normalizing; handle uppercase variants
-                            if col in ['IF','n_weight','N_WEIGHT','VALEUR','Valeur']:
-                                if col in ['n_weight','N_WEIGHT']:
-                                    ser = ser.abs()
-                                ser = -ser
-
-                        if ser.dropna().empty or ser.max() == ser.min():
-                            norm = pd.Series(0.5, index=filtered_df.index)
-                        else:
-                            norm = (ser - ser.min()) / (ser.max() - ser.min())
-                        
-                        # Reset index to match horse names for proper alignment
-                        norm.index = filtered_horses
-                        temp_norm_df[col] = norm
-                    
-                    # Reindex temp_norm_df to composite_df order
-                    composite_horses = composite_df['Cheval'].astype(str).values
-                    norm_df = temp_norm_df.reindex(composite_horses, fill_value=0.5)
-
-                    # Detect horse number column - N° is the valid horse number (NOT CORDE which is something else)
-                    num_col = None
-                    # Prioritize 'N°' (with encoding variant 'N?'), skip CORDE as it's a different variable
-                    num_candidates = ['N°', 'N?', 'Poste', 'POSTE', 'Post', 'N']
-                    
-                    # Debug: Print available columns that might contain horse numbers
-                    print(f"[DEBUG] Checking for horse number column in {len(filtered_df.columns)} columns")
-                    number_like_cols = [c for c in filtered_df.columns if 'n' in c.lower() or 'corde' in c.lower() or 'post' in c.lower()]
-                    print(f"[DEBUG] Columns matching number patterns: {number_like_cols}")
-                    
-                    for candidate in num_candidates:
-                        if candidate in filtered_df.columns:
-                            num_col = candidate
-                            print(f"[DEBUG] Found horse number column: '{num_col}'")
-                            break
-                    
-                    if not num_col:
-                        print(f"[DEBUG] No horse number column found. Available columns: {list(filtered_df.columns)}")
-                    
-                    # Build lookup: horse name -> horse number, using filtered_df
-                    cheval_col = 'Cheval' if 'Cheval' in filtered_df.columns else ('CHEVAL' if 'CHEVAL' in filtered_df.columns else None)
-                    name_to_number = {}
-                    if cheval_col and num_col:
-                        # Ensure both are strings for proper mapping
-                        horse_names = filtered_df[cheval_col].astype(str).values
-                        horse_numbers = filtered_df[num_col].astype(str).values
-                        
-                        # DEBUG: Print first few name-number pairs to verify alignment
-                        print(f"[DEBUG] First 5 name-number pairs from filtered_df:")
-                        for i in range(min(5, len(horse_names))):
-                            print(f"  [{i}] '{horse_names[i]}' -> '{horse_numbers[i]}'")
-                        
-                        name_to_number = dict(zip(horse_names, horse_numbers))
-                        print(f"[DEBUG] Built name_to_number mapping with {len(name_to_number)} horses from column '{num_col}'")
-                    
-                    # Create composite_scores Series using composite_df values, indexed by horse names
-                    composite_scores = pd.Series(composite_df['Composite'].values, index=composite_horses)
-                    # Sort by composite score descending (this determines heatmap display order)
-                    composite_scores = composite_scores.sort_values(ascending=False)
-                    
-                    # Reorder norm_df to match sorted composite_scores order
-                    norm_df = norm_df.loc[composite_scores.index]
-                    
-                    # Now update index to include horse numbers (after reordering, so alignment is maintained)
-                    if name_to_number:
-                        print(f"[DEBUG] Formatting heatmap index. norm_df has {len(norm_df)} horses")
-                        formatted_index = []
-                        for i, name in enumerate(norm_df.index):
-                            number = name_to_number.get(name, '?')
-                            formatted_entry = f"{name} ({number})"
-                            formatted_index.append(formatted_entry)
-                            if i < 5:  # Print first 5 for debugging
-                                print(f"  [{i}] Looking up '{name}' -> got '{number}' -> formatted as '{formatted_entry}'")
-                        
-                        norm_df.index = formatted_index
-                        # Also update composite_scores index to match
-                        composite_scores.index = norm_df.index
-                        print(f"[DEBUG] Final formatted heatmap index (first 5): {list(norm_df.index[:5])}")
-                    
-                    self.current_heatmap_data = (norm_df, composite_scores)
-
-                    # Update external controls (populate sort dropdown with metric columns)
-                    try:
-                        if getattr(self, 'heatmap_controls_dict', None):
-                            sc = self.heatmap_controls_dict.get('sort_combo')
-                            if sc is not None:
-                                try:
-                                    sc.clear()
-                                    sc.addItem('Composite')
-                                    for col in norm_df.columns:
-                                        sc.addItem(col)
-                                except Exception:
-                                    pass
-                            vmin_w = self.heatmap_controls_dict.get('vmin_spin')
-                            vmax_w = self.heatmap_controls_dict.get('vmax_spin')
-                            if vmin_w is not None:
-                                try:
-                                    vmin_w.setValue(0.0)
-                                except Exception:
-                                    pass
-                            if vmax_w is not None:
-                                try:
-                                    vmax_w.setValue(1.0)
-                                except Exception:
-                                    pass
-                    except Exception:
-                        pass
-
-                    # Clean up old heatmap widget BEFORE creating new one
-                    # (prevents old heatmap from appearing when switching races)
-                    # Close all matplotlib figures to free memory
-                    try:
-                        plt.close('all')
-                    except Exception:
-                        pass
-                    
-                    # Remove all widgets from layout
-                    while self.summary_canvas_layout.count() > 0:
-                        item = self.summary_canvas_layout.takeAt(0)
-                        if item:
-                            w = item.widget()
-                            if w:
-                                w.setParent(None)
-                                w.deleteLater()
-                    
-                    # Force immediate layout update
-                    self.summary_canvas_layout.update()
-                    
-                    # Create the new heatmap widget
-                    try:
-                        from heatmap_matplotlib_interactive import create_interactive_matplotlib_heatmap
-                        widget = create_interactive_matplotlib_heatmap(norm_df, composite_scores, parent=self, external_controls=getattr(self, 'heatmap_controls_dict', None), on_metric_toggle=self.on_heatmap_metric_toggle)
-                    except Exception as ex:
-                        print(f"[ERROR] Failed to create interactive heatmap: {ex}")
-                        widget = create_heatmap_canvas(norm_df, composite_scores)
-                    
-                    # Add new widget and refresh scroll area
-                    self.summary_canvas_layout.addWidget(widget)
-                    self.summary_canvas_scroll.setWidget(self.summary_canvas_container)
         except Exception as e:
-            print(f"Error refreshing composite/heatmap: {e}")
+            print(f"Error refreshing composite: {e}")
 
     def open_settings_dialog(self):
         try:
@@ -8543,8 +8025,8 @@ class RaceScraperApp(QMainWindow):
         self.populate_analysis_table(self.weight_stab_table, weight_stab_df, "Weight Stability")
         self.populate_analysis_table(self.light_weight_table, light_weight_df, "Poids Leger")
 
-        # --- Summary composite and heatmap ---
-        # Use refresh method so UI controls (e.g., corde slider) can re-run composite/heatmap
+        # --- Summary composite ---
+        # Use refresh method so UI controls (e.g., corde slider) can re-run composite
         self.refresh_composite_and_heatmap(filtered_df)
         
         # *** NEW: Compute and display outsider analysis (AFTER composite is generated) ***
@@ -9455,7 +8937,7 @@ class RaceScraperApp(QMainWindow):
         pass
 
     def on_metric_weight_changed(self, metric, value):
-        """Generic handler for metric sliders. Persists value and refreshes composite/heatmap and regenerates bets."""
+        """Generic handler for metric sliders. Persists value and refreshes composite and regenerates bets."""
         try:
             perc = int(value)
             self.metric_weights[metric] = float(perc) / 100.0
@@ -9466,7 +8948,7 @@ class RaceScraperApp(QMainWindow):
                 pass
 
             if hasattr(self, 'last_filtered_df') and self.last_filtered_df is not None and self.analysis_widget.isVisible():
-                # Refresh composite scores and heatmap with new weights
+                # Refresh composite scores with new weights
                 self.refresh_composite_and_heatmap(self.last_filtered_df)
                 
                 # Update race statistics with new weights
@@ -11250,15 +10732,7 @@ plat ou obstacles, puis copiez l'URL de ladite reunion
 • 🎯 Pronostics: Predictions du systeme
 • 🎵 Cordes: Cordes favorables par hippodrome
 
-4️⃣ VISUALISATION HEATMAP
-─────────────────────────────────────────
-• Affichage matriciel: Chevaux (lignes) vs Metriques (colonnes)
-• Selectionnez les metriques a afficher via les cases a cocher
-• Triez par metrique selectionnee (dropdown)
-• Ajustez vmin/vmax pour changer l'echelle de couleur
-• Vert = bon score, Rouge = mauvais score
-
-5️⃣ GENERATION DE COMBINAISONS
+4️⃣4?? GENERATION DE COMBINAISONS
 ─────────────────────────────────────────
 • Cliquez sur "🎲 Generateur de Combinaisons"
 a partir du menu "Paris"
@@ -11514,15 +10988,6 @@ COMPOSITE SCORE (Synthese)
    Combinez avec confirmation d'autres sources
 
 ════════════════════════════════════════════════════════════════════
-HEATMAP COLOR GUIDE
-════════════════════════════════════════════════════════════════════
-🟢 VERT (0.8-1.0): Excellent score, tres bon pour cette metrique
-🟡 JAUNE (0.4-0.8): Score moyen, acceptable
-🔴 ROUGE (0.0-0.4): Mauvais score, point faible
-
-Plus la couleur est VERTE, mieux c'est pour le cheval!
-
-════════════════════════════════════════════════════════════════════
 COMBINAISON OPTIMALE
 ════════════════════════════════════════════════════════════════════
 Meilleur cheval = COMPOSITE ELEVE + IC BAS + S_COEFF ELEVE + IF BAS
@@ -11564,7 +11029,6 @@ Votre outil d'intelligence et d'analyse des courses hippiques
 ✓ Analyse complete avec 7 metriques (IC, S_COEFF, IF, n_weight, COTE, Corde, VALEUR)
 ✓ 10 sources d'analyse combinables (priorite ≥4 sources)
 ✓ Generation automatique de pronostics + combinaisons
-✓ Visualisation interactive en heatmap
 ✓ Export PDF et impression
 ✓ Parametrage dynamique des poids metriques
 
