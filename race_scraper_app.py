@@ -47,7 +47,7 @@ except Exception as _e:
 import pandas as pd
 import numpy as np
 from data_sources import data_source_manager
-from heatmap_matplotlib_interactive import create_interactive_matplotlib_heatmap, create_heatmap_controls
+ # Lazy import of Qt heatmap helpers inside GUI methods to avoid Streamlit startup deps.
 from favorable_cordes import compute_favorable_corde_horses
 from race_stats_function import compute_race_statistics
 from meeting_cache import get_cached_meetings, cache_meetings
@@ -2901,6 +2901,7 @@ def create_heatmap_canvas(norm_df, composite_scores=None):
 
 def create_interactive_heatmap_widget(norm_df, composite_scores=None, parent=None, on_metric_toggle=None):
     """Wrapper that uses the Matplotlib-based interactive heatmap."""
+    from heatmap_matplotlib_interactive import create_interactive_matplotlib_heatmap
     return create_interactive_matplotlib_heatmap(norm_df, composite_scores, parent, on_metric_toggle=on_metric_toggle)
 
 class ScraperThread(QThread):
@@ -5188,6 +5189,7 @@ class RaceScraperApp(QMainWindow):
 
         # Create external controls widget (will be populated with columns when data is available)
         try:
+            from heatmap_matplotlib_interactive import create_heatmap_controls
             self.heatmap_controls_widget, self.heatmap_controls_dict = create_heatmap_controls(parent=self)
             top_bar_layout.addWidget(self.heatmap_controls_widget, 1)
         except Exception:
@@ -8113,6 +8115,7 @@ class RaceScraperApp(QMainWindow):
             
             # Create interactive heatmap widget (Plotly) at higher quality/size
             try:
+                from heatmap_matplotlib_interactive import create_interactive_matplotlib_heatmap
                 widget = create_interactive_matplotlib_heatmap(norm_df, composite_scores, parent=self, external_controls=getattr(self, 'heatmap_controls_dict', None), on_metric_toggle=self.on_heatmap_metric_toggle)
             except Exception:
                 widget = create_heatmap_canvas(norm_df, composite_scores)
@@ -8334,6 +8337,7 @@ class RaceScraperApp(QMainWindow):
                     
                     # Create the new heatmap widget
                     try:
+                        from heatmap_matplotlib_interactive import create_interactive_matplotlib_heatmap
                         widget = create_interactive_matplotlib_heatmap(norm_df, composite_scores, parent=self, external_controls=getattr(self, 'heatmap_controls_dict', None), on_metric_toggle=self.on_heatmap_metric_toggle)
                     except Exception as ex:
                         print(f"[ERROR] Failed to create interactive heatmap: {ex}")

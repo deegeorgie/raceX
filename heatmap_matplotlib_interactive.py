@@ -1,18 +1,45 @@
 """Interactive Matplotlib heatmap with controls for Qt."""
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-                             QListWidget, QListWidgetItem, QDoubleSpinBox, QPushButton,
-                             QFileDialog, QMessageBox, QCheckBox, QScrollArea)
-from PyQt5.QtCore import Qt, QSize
-from PyQt5.QtGui import QColor
+
+# PyQt5 is optional; Streamlit imports this module for shared logic.
+try:
+    from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
+                                 QListWidget, QListWidgetItem, QDoubleSpinBox, QPushButton,
+                                 QFileDialog, QMessageBox, QCheckBox, QScrollArea)
+    from PyQt5.QtCore import Qt, QSize
+    from PyQt5.QtGui import QColor
+    PYQT_AVAILABLE = True
+    _PYQT_IMPORT_ERROR = None
+except Exception as _e:
+    PYQT_AVAILABLE = False
+    _PYQT_IMPORT_ERROR = _e
+
+    def _pyqt_unavailable(*_args, **_kwargs):
+        raise ImportError("PyQt5 is required for the interactive heatmap GUI but is not installed.")
+
+    class _PyQtBase:
+        def __init__(self, *_args, **_kwargs):
+            _pyqt_unavailable()
+
+    QWidget = QVBoxLayout = QHBoxLayout = QLabel = QComboBox = _PyQtBase
+    QListWidget = QListWidgetItem = QDoubleSpinBox = QPushButton = _PyQtBase
+    QFileDialog = QMessageBox = QCheckBox = QScrollArea = _PyQtBase
+    Qt = QSize = QColor = _PyQtBase
 import pandas as pd
 import matplotlib
-# Ensure we use the Qt5Agg backend for interactive Qt embedding
-try:
-    matplotlib.use('Qt5Agg')
-except Exception:
-    pass
+# Ensure we use the Qt5Agg backend for interactive Qt embedding when available
+if PYQT_AVAILABLE:
+    try:
+        matplotlib.use('Qt5Agg')
+    except Exception:
+        pass
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+if PYQT_AVAILABLE:
+    try:
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+    except Exception:
+        FigureCanvas = None
+else:
+    FigureCanvas = None
 import textwrap
 
 # Compact control stylesheet for heatmap controls
@@ -45,6 +72,8 @@ def create_interactive_matplotlib_heatmap(norm_df, composite_scores=None, parent
         on_metric_toggle: Optional callback function(metric_name, is_checked) to trigger
                          when a metric checkbox is toggled (for external recomputation).
     """
+    if not PYQT_AVAILABLE or FigureCanvas is None:
+        raise ImportError("PyQt5 is required for the interactive heatmap GUI but is not installed.")
     if norm_df.empty:
         print("[WARN] norm_df is empty, returning empty widget")
         return QWidget(parent)
@@ -498,6 +527,8 @@ def create_heatmap_controls(norm_df=None, parent=None):
     controls_dict contains: 'sort_combo','vmin_spin','vmax_spin','cmap_combo','export_btn'
     If norm_df is provided, column names are added to the sort dropdown.
     """
+    if not PYQT_AVAILABLE:
+        raise ImportError("PyQt5 is required for the interactive heatmap GUI but is not installed.")
     controls = QWidget(parent)
     layout = QHBoxLayout(controls)
     layout.setContentsMargins(4, 4, 4, 4)
