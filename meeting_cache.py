@@ -6,13 +6,7 @@ Provides persistent caching of meeting data to avoid re-downloading on every app
 import json
 import os
 from pathlib import Path
-from datetime import datetime, timedelta
-try:
-    from PyQt5.QtCore import QDate
-    QDATE_AVAILABLE = True
-except Exception:
-    QDate = None
-    QDATE_AVAILABLE = False
+from datetime import datetime, timedelta, date
 
 
 def get_cache_dir():
@@ -31,11 +25,13 @@ def get_cache_file():
     return get_cache_dir() / 'meetings_cache.json'
 
 
-def get_cache_date_key(date_qdate):
-    """Convert QDate to cache key format (YYYY-MM-DD)."""
-    if QDATE_AVAILABLE and isinstance(date_qdate, QDate):
-        return date_qdate.toString('yyyy-MM-dd')
-    return str(date_qdate)
+def get_cache_date_key(date_input):
+    """Convert date/datetime/str to cache key format (YYYY-MM-DD)."""
+    if isinstance(date_input, datetime):
+        return date_input.date().isoformat()
+    if isinstance(date_input, date):
+        return date_input.isoformat()
+    return str(date_input)
 
 
 def load_cache():

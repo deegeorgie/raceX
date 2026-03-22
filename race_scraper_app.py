@@ -7,7 +7,7 @@ French text and Unicode support enabled
 
 import sys
 import sqlite3
-from datetime import datetime
+from datetime import datetime, date
 
 # PyQt5 is only required for the desktop GUI. Streamlit imports this module for
 # shared scraping logic, so keep PyQt5 optional to avoid import-time failures.
@@ -87,45 +87,65 @@ def get_downloads_folder():
 # DATE UTILITIES
 # =====================================================
 
-def convert_date_to_french_url(qdate):
+def convert_date_to_french_url(date_input):
     """
-    Convert a QDate to French URL format.
-    Example: QDate(2026, 1, 14) -> 'mercredi-14-janvier-2026'
+    Convert a date/datetime/str value to French URL format.
+    Example: date(2026, 1, 14) -> 'mercredi-14-janvier-2026'
     Handles invalid dates gracefully.
     Supports non-accented month names for URL compatibility.
     """
     try:
-        if not qdate or not qdate.isValid():
+        if not date_input:
             return None
-        
+
+        # Normalize to a date-like object
+        if isinstance(date_input, datetime):
+            d = date_input.date()
+        elif isinstance(date_input, date):
+            d = date_input
+        elif isinstance(date_input, str):
+            # Expect YYYY-MM-DD
+            try:
+                d = datetime.strptime(date_input, "%Y-%m-%d").date()
+            except Exception:
+                return None
+        else:
+            # Duck-typing: year(), month(), day()
+            try:
+                y = int(date_input.year())
+                m = int(date_input.month())
+                d_ = int(date_input.day())
+                d = date(y, m, d_)
+            except Exception:
+                return None
+
         # French months (non-accented for URL compatibility)
         french_months = {
             1: 'janvier', 2: 'fevrier', 3: 'mars', 4: 'avril',
             5: 'mai', 6: 'juin', 7: 'juillet', 8: 'aout',
             9: 'septembre', 10: 'octobre', 11: 'novembre', 12: 'decembre'
         }
-        
+
         french_days = {
             0: 'lundi', 1: 'mardi', 2: 'mercredi', 3: 'jeudi',
             4: 'vendredi', 5: 'samedi', 6: 'dimanche'
         }
-        
-        day_of_week = qdate.dayOfWeek() - 1  # Qt uses 1-7 (Mon-Sun), we need 0-6
-        if day_of_week < 0 or day_of_week > 6:
+
+        day_of_week = d.weekday()  # Mon=0 .. Sun=6
+        day_name = french_days.get(day_of_week)
+        if not day_name:
             print(f"[WARNING] Invalid day of week: {day_of_week}")
             return None
-            
-        day_name = french_days[day_of_week]
-        day_num = qdate.day()
-        month_num = qdate.month()
-        
+
+        day_num = d.day
+        month_num = d.month
         if month_num < 1 or month_num > 12:
             print(f"[WARNING] Invalid month: {month_num}")
             return None
-            
+
         month_name = french_months[month_num]
-        year = qdate.year()
-        
+        year = d.year
+
         return f"{day_name}-{day_num:02d}-{month_name}-{year}"
     except Exception as e:
         print(f"[ERROR] convert_date_to_french_url failed: {e}")
@@ -143,10 +163,29 @@ def scrape_meeting_urls(date_qdate=None, force_refresh=False):
     Returns a dictionary with meeting names as keys and URLs as values.
     Caches results to avoid repeated downloads (24-hour TTL).
     """
+    def _normalize_cache_date(value):
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            return value
+        # Duck-typing: year(), month(), day()
+        try:
+            y = int(value.year())
+            m = int(value.month())
+            d = int(value.day())
+            return date(y, m, d)
+        except Exception:
+            return str(value)
+
     try:
+        cache_date = _normalize_cache_date(date_qdate)
         # Check cache first (unless force_refresh is True)
-        if not force_refresh and date_qdate:
-            cached_meetings, is_fresh = get_cached_meetings(date_qdate)
+        if not force_refresh and cache_date:
+            cached_meetings, is_fresh = get_cached_meetings(cache_date)
             if cached_meetings and is_fresh:
                 print(f"[INFO] Using cached meetings for {date_qdate}")
                 return cached_meetings
@@ -220,8 +259,8 @@ def scrape_meeting_urls(date_qdate=None, force_refresh=False):
         print(f"[INFO] Successfully scraped {len(meetings)} meetings")
         
         # Cache the results if we have a date_qdate
-        if date_qdate and meetings:
-            cache_meetings(date_qdate, meetings)
+        if cache_date and meetings:
+            cache_meetings(cache_date, meetings)
             print(f"[INFO] Cached {len(meetings)} meetings for {date_qdate}")
         
         return meetings
@@ -5738,13 +5777,13 @@ class RaceScraperApp(QMainWindow):
                 else:
                     date_qdate = None
             
-            # Validate date is a proper QDate object
+            # Validate date is a proper GUI date object
             if not isinstance(date_qdate, QDate):
                 print(f"[ERROR] Invalid date type: {type(date_qdate)}, using current date")
                 date_qdate = QDate.currentDate()
             
             if not date_qdate.isValid():
-                print(f"[ERROR] Invalid QDate object, using current date")
+                print(f"[ERROR] Invalid date object, using current date")
                 date_qdate = QDate.currentDate()
             
             print(f"[DEBUG] Using date: {date_qdate.toString()}")

@@ -1671,19 +1671,6 @@ def _sorted_prognosis_display(race_df: pd.DataFrame, composite_df: pd.DataFrame)
     return sanitize_horse_list(prog)
 
 
-def _qdate_from_pydate(d: date):
-    """Wrap a Python date into a minimal QDate-like object for scrape_meeting_urls."""
-    class _QDate:
-        def __init__(self, d):
-            self._d = d
-        def isValid(self): return True
-        def day(self): return self._d.day
-        def month(self): return self._d.month
-        def year(self): return self._d.year
-        def dayOfWeek(self): return self._d.isoweekday()  # Mon=1 … Sun=7
-    return _QDate(d)
-
-
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("🏇 RaceX")
@@ -1697,12 +1684,11 @@ with st.sidebar:
 
     # Date picker
     selected_date = st.date_input("Race Date", value=date.today())
-    qdate = _qdate_from_pydate(selected_date)
 
     # Load meetings
     if st.button("🔄 Load Meetings", use_container_width=True):
         with st.spinner("Fetching meetings…"):
-            meetings = scrape_meeting_urls(qdate)
+            meetings = scrape_meeting_urls(selected_date)
         if meetings:
             st.session_state.meetings = meetings
             st.success(f"Found {len(meetings)} meetings")
