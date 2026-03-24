@@ -18,12 +18,28 @@ import numpy as np
 from datetime import date
 import io
 import re
+import json
+from typing import Optional, List
+import time
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use("Agg")
 import plotly.express as px
 import requests
 from bs4 import BeautifulSoup
+try:
+    from catboost import CatBoostClassifier, Pool
+except Exception:
+    CatBoostClassifier = None
+    Pool = None
+try:
+    from sklearn.model_selection import train_test_split, GroupShuffleSplit
+    from sklearn.metrics import accuracy_score, roc_auc_score
+except Exception:
+    train_test_split = None
+    GroupShuffleSplit = None
+    accuracy_score = None
+    roc_auc_score = None
 
 # ── Import existing business logic ──────────────────────────────────────────
 from data_sources import data_source_manager
@@ -173,6 +189,373 @@ def show_df(df: pd.DataFrame, height: int = 400):
         st.info("No data available.")
     else:
         st.dataframe(df, use_container_width=True, height=height)
+
+
+# CatBoost preprocessing helpers (flat history)
+def normalize_text(x):
+    if pd.isna(x):
+        return "__UNKNOWN__"
+    x = str(x).upper().strip()
+    x = re.sub(r"[.,;:!?'\"()\[\]{}]", "", x)
+    x = re.sub(r"\s+", " ", x)
+    if x == "":
+        return "__UNKNOWN__"
+    return x
+
+
+def normalize_text_columns(df, cols):
+    for c in cols:
+        df[c] = df[c].astype(str).apply(normalize_text)
+    return df
+
+
+def build_vocab(df, categorical_cols, save_path="catboost_vocab.json"):
+    vocab = {}
+    for col in categorical_cols:
+        unique_vals = sorted(df[col].unique().tolist())
+        if "__UNKNOWN__" not in unique_vals:
+            unique_vals.insert(0, "__UNKNOWN__")
+        vocab[col] = unique_vals
+    with open(save_path, "w") as f:
+        json.dump(vocab, f, indent=4)
+    return vocab
+
+
+def apply_vocab(df, vocab):
+    for col, allowed_values in vocab.items():
+        df[col] = df[col].apply(lambda x: x if x in allowed_values else "__UNKNOWN__")
+    return df
+
+
+_CATBOOST_DROP_COLS = [
+    "field1",
+    "DARK_HORSE",
+    "SURPRISE_SCORE",
+    "DAYSSINCELASTRACE",
+    "NUM_STARTERS",
+    "PRIX",
+    "DESCRIPTIF",
+    "MUSIC_LIST",
+    "MUSIQUE",
+    "HIPPODROME",
+    "RAW_MEAN",
+    "ID_COURSE",
+    "DEPART",
+    "DIST",
+]
+
+
+def _select_group_col(df: pd.DataFrame):
+    return _find_col(df, "REF_COURSE", "ID_COURSE", "COURSE_ID", "RACE_ID", "race_id")
+
+
+def _prepare_flat_catboost_features(
+    df: pd.DataFrame,
+    vocab: Optional[dict] = None,
+    fit_vocab: bool = False,
+    vocab_path: str = "catboost_vocab.json",
+):
+    if df is None or df.empty:
+        return pd.DataFrame(), [], None, None, None
+    work = df.copy()
+    if "RANG" in work.columns:
+        work["win"] = (work["RANG"] == 1).astype(int)
+        work["place"] = (work["RANG"] <= 3).astype(int)
+
+    work = work.drop(columns=_CATBOOST_DROP_COLS, errors="ignore")
+    cat_cols = work.select_dtypes(include=["object"]).columns.tolist()
+    work = normalize_text_columns(work, cat_cols)
+
+    out_vocab = vocab
+    if fit_vocab:
+        out_vocab = build_vocab(work, cat_cols, vocab_path)
+    elif vocab:
+        work = apply_vocab(work, vocab)
+
+    X = work.drop(columns=["win", "place", "RANG"], errors="ignore")
+    y_win = work["win"] if "win" in work.columns else None
+    y_place = work["place"] if "place" in work.columns else None
+    return X, cat_cols, out_vocab, y_win, y_place
+
+
+def _align_features_for_inference(X: pd.DataFrame, feature_names: List[str], cat_cols: List[str]):
+    if X is None or X.empty:
+        return pd.DataFrame()
+    aligned = X.copy()
+    for col in feature_names:
+        if col not in aligned.columns:
+            if col in cat_cols:
+                aligned[col] = "__UNKNOWN__"
+            else:
+                aligned[col] = np.nan
+    aligned = aligned[feature_names]
+    return aligned
+
+
+def _compute_numeric_stats(X: pd.DataFrame) -> dict:
+    num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+    stats = {}
+    for col in num_cols:
+        ser = pd.to_numeric(X[col], errors="coerce")
+        mean = float(ser.mean()) if ser.notna().any() else 0.0
+        std = float(ser.std(ddof=0)) if ser.notna().any() else 1.0
+        if std == 0 or np.isnan(std):
+            std = 1.0
+        stats[col] = {"mean": mean, "std": std}
+    return stats
+
+
+def _apply_numeric_stats(X: pd.DataFrame, stats: dict) -> pd.DataFrame:
+    if X is None or X.empty:
+        return X
+    out = X.copy()
+    for col, ms in stats.items():
+        if col in out.columns:
+            mean = ms.get("mean", 0.0)
+            std = ms.get("std", 1.0)
+            if std == 0:
+                std = 1.0
+            out[col] = (pd.to_numeric(out[col], errors="coerce") - mean) / std
+    return out
+
+
+def _train_catboost_models(
+    df: pd.DataFrame,
+    db_path: str = "zone_turf_flat.db",
+    vocab_path: str = "catboost_vocab.json",
+    meta_path: str = "catboost_meta.json",
+    model_win_path: str = "catboost_winner_model.cbm",
+    model_place_path: str = "catboost_place_model.cbm",
+    fi_win_path: str = "catboost_feature_importance_win.csv",
+    fi_place_path: str = "catboost_feature_importance_place.csv",
+    test_size: float = 0.2,
+    random_state: int = 42,
+    iterations: int = 500,
+    learning_rate: float = 0.05,
+    depth: int = 8,
+    use_class_weights: bool = True,
+    use_best_model: bool = True,
+    early_stopping_rounds: int = 100,
+):
+    if CatBoostClassifier is None or Pool is None or train_test_split is None:
+        raise RuntimeError("CatBoost or scikit-learn not available.")
+
+    X, cat_cols, vocab, y_win, y_place = _prepare_flat_catboost_features(
+        df, vocab=None, fit_vocab=True, vocab_path=vocab_path
+    )
+    if X.empty or y_win is None or y_place is None:
+        raise RuntimeError("Training data is empty or missing targets.")
+
+    numeric_stats = _compute_numeric_stats(X)
+    X = _apply_numeric_stats(X, numeric_stats)
+
+    group_col = _select_group_col(df)
+    groups = df[group_col] if group_col and group_col in df.columns else None
+
+    if groups is not None and GroupShuffleSplit is not None and groups.nunique() > 1:
+        gss = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
+        train_idx, test_idx = next(gss.split(X, y_win, groups=groups))
+    else:
+        train_idx, test_idx = train_test_split(
+            np.arange(len(X)),
+            test_size=test_size,
+            random_state=random_state,
+            stratify=y_win if y_win.nunique() > 1 else None,
+        )
+
+    X_train = X.iloc[train_idx]
+    X_test = X.iloc[test_idx]
+    y_train_win = y_win.iloc[train_idx]
+    y_test_win = y_win.iloc[test_idx]
+    y_train_place = y_place.iloc[train_idx]
+    y_test_place = y_place.iloc[test_idx]
+
+    cat_indices = [X_train.columns.get_loc(c) for c in cat_cols if c in X_train.columns]
+    train_pool_win = Pool(X_train, y_train_win, cat_features=cat_indices)
+    test_pool_win = Pool(X_test, y_test_win, cat_features=cat_indices)
+    train_pool_place = Pool(X_train, y_train_place, cat_features=cat_indices)
+    test_pool_place = Pool(X_test, y_test_place, cat_features=cat_indices)
+
+    def _make_class_weights(y_train):
+        if not use_class_weights:
+            return None
+        try:
+            vc = y_train.value_counts()
+            if len(vc) < 2:
+                return None
+            total = float(vc.sum())
+            w0 = total / (2.0 * float(vc.get(0, 1.0)))
+            w1 = total / (2.0 * float(vc.get(1, 1.0)))
+            return {0: w0, 1: w1}
+        except Exception:
+            return None
+
+    class_weights_win = _make_class_weights(y_train_win)
+    class_weights_place = _make_class_weights(y_train_place)
+
+    od_type = "Iter" if early_stopping_rounds and early_stopping_rounds > 0 else None
+
+    model_win = CatBoostClassifier(
+        iterations=iterations,
+        learning_rate=learning_rate,
+        depth=depth,
+        loss_function="Logloss",
+        eval_metric="AUC",
+        random_seed=random_state,
+        class_weights=class_weights_win,
+        use_best_model=use_best_model,
+        od_type=od_type,
+        od_wait=int(early_stopping_rounds) if od_type else None,
+        verbose=100,
+    )
+    model_place = CatBoostClassifier(
+        iterations=iterations,
+        learning_rate=learning_rate,
+        depth=depth,
+        loss_function="Logloss",
+        eval_metric="AUC",
+        random_seed=random_state,
+        class_weights=class_weights_place,
+        use_best_model=use_best_model,
+        od_type=od_type,
+        od_wait=int(early_stopping_rounds) if od_type else None,
+        verbose=100,
+    )
+
+    model_win.fit(train_pool_win, eval_set=test_pool_win)
+    model_place.fit(train_pool_place, eval_set=test_pool_place)
+
+    pred_win = model_win.predict_proba(test_pool_win)[:, 1]
+    pred_place = model_place.predict_proba(test_pool_place)[:, 1]
+
+    def _safe_auc(y_true, y_pred):
+        if roc_auc_score is None:
+            return None
+        try:
+            if y_true.nunique() < 2:
+                return None
+            return float(roc_auc_score(y_true, y_pred))
+        except Exception:
+            return None
+
+    def _safe_acc(y_true, y_pred):
+        if accuracy_score is None:
+            return None
+        try:
+            return float(accuracy_score(y_true, (y_pred > 0.5)))
+        except Exception:
+            return None
+
+    metrics = {
+        "winner_auc": _safe_auc(y_test_win, pred_win),
+        "winner_acc": _safe_acc(y_test_win, pred_win),
+        "place_auc": _safe_auc(y_test_place, pred_place),
+        "place_acc": _safe_acc(y_test_place, pred_place),
+        "train_size": int(len(train_idx)),
+        "test_size": int(len(test_idx)),
+        "group_col": group_col,
+    }
+
+    model_win.save_model(model_win_path)
+    model_place.save_model(model_place_path)
+
+    fi_win = _feature_importance_df(model_win, X.columns.tolist())
+    fi_place = _feature_importance_df(model_place, X.columns.tolist())
+    if not fi_win.empty:
+        fi_win.to_csv(fi_win_path, index=False)
+    if not fi_place.empty:
+        fi_place.to_csv(fi_place_path, index=False)
+
+    meta = {
+        "db_path": db_path,
+        "feature_names": X.columns.tolist(),
+        "cat_cols": cat_cols,
+        "metrics": metrics,
+        "class_weights_win": class_weights_win,
+        "class_weights_place": class_weights_place,
+        "fi_win_path": fi_win_path,
+        "fi_place_path": fi_place_path,
+        "numeric_stats": numeric_stats,
+    }
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+
+    return metrics
+
+
+def _predict_catboost(
+    df: pd.DataFrame,
+    model_win_path: str = "catboost_winner_model.cbm",
+    model_place_path: str = "catboost_place_model.cbm",
+    vocab_path: str = "catboost_vocab.json",
+    meta_path: str = "catboost_meta.json",
+):
+    if CatBoostClassifier is None or Pool is None:
+        raise RuntimeError("CatBoost not available.")
+    if not os.path.exists(model_win_path) or not os.path.exists(model_place_path):
+        raise RuntimeError("Model files not found.")
+    if not os.path.exists(vocab_path) or not os.path.exists(meta_path):
+        raise RuntimeError("Vocab or meta file not found.")
+
+    with open(vocab_path, "r") as f:
+        vocab = json.load(f)
+    with open(meta_path, "r") as f:
+        meta = json.load(f)
+
+    X, cat_cols, _, _, _ = _prepare_flat_catboost_features(df, vocab=vocab, fit_vocab=False)
+    feature_names = meta.get("feature_names", X.columns.tolist())
+    cat_cols = meta.get("cat_cols", cat_cols)
+    numeric_stats = meta.get("numeric_stats", {})
+    X = _align_features_for_inference(X, feature_names, cat_cols)
+    if isinstance(numeric_stats, dict) and numeric_stats:
+        X = _apply_numeric_stats(X, numeric_stats)
+    if X.empty:
+        raise RuntimeError("No features available for prediction.")
+
+    cat_indices = [X.columns.get_loc(c) for c in cat_cols if c in X.columns]
+    pool = Pool(X, cat_features=cat_indices)
+
+    model_win = CatBoostClassifier()
+    model_place = CatBoostClassifier()
+    model_win.load_model(model_win_path)
+    model_place.load_model(model_place_path)
+
+    pred_win = model_win.predict_proba(pool)[:, 1]
+    pred_place = model_place.predict_proba(pool)[:, 1]
+
+    out = df.copy()
+    out["p_win"] = pred_win
+    out["p_place"] = pred_place
+    return out
+
+
+def _feature_importance_df(model: CatBoostClassifier, feature_names: List[str]) -> pd.DataFrame:
+    try:
+        importances = model.get_feature_importance()
+        if importances is None or len(importances) != len(feature_names):
+            return pd.DataFrame()
+        return pd.DataFrame(
+            {"feature": feature_names, "importance": importances}
+        ).sort_values("importance", ascending=False)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _shap_summary_df(model: CatBoostClassifier, pool: Pool, feature_names: List[str]) -> pd.DataFrame:
+    try:
+        shap_vals = model.get_feature_importance(pool, type="ShapValues")
+        if shap_vals is None or len(shap_vals) == 0:
+            return pd.DataFrame()
+        # last column is expected value
+        shap_arr = np.array(shap_vals)[:, :-1]
+        mean_abs = np.mean(np.abs(shap_arr), axis=0)
+        if len(mean_abs) != len(feature_names):
+            return pd.DataFrame()
+        return pd.DataFrame(
+            {"feature": feature_names, "mean_abs_shap": mean_abs}
+        ).sort_values("mean_abs_shap", ascending=False)
+    except Exception:
+        return pd.DataFrame()
 
 
 def _find_col(df: pd.DataFrame, *candidates):
@@ -1984,11 +2367,13 @@ else:
         "📈 Trending Odds",
         "🧭 Favorable Cordes",
         "🎲 Bet Generator",
+        "🤖 Model (CatBoost)",
     ])
     (
         tab_raw, tab_comp, tab_heat,
         tab_fit, tab_cls, tab_scoeff,
         tab_wt, tab_lw, tab_prog, tab_trending, tab_corde, tab_bets,
+        tab_model,
     ) = tabs
 
 
@@ -2896,3 +3281,184 @@ else:
                     st.session_state.last_bets_label = "flat_bets"
                 else:
                     st.warning("Could not generate combinations.")
+
+    with tab_model:
+        st.subheader("CatBoost Training & Inference (Flat)")
+        st.caption("Training uses historical data from the DB. Inference uses the currently loaded race.")
+        if CatBoostClassifier is None or train_test_split is None:
+            st.error("CatBoost and scikit-learn are required. Install with `pip install catboost scikit-learn`.")
+        else:
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                db_path = st.text_input("DB path", value="zone_turf_flat.db")
+            with col_b:
+                test_size = st.slider("Test size", 0.05, 0.40, 0.20, 0.05)
+            with col_c:
+                random_state = st.number_input("Random seed", value=42, step=1)
+
+            col_d, col_e, col_f = st.columns(3)
+            with col_d:
+                iterations = st.number_input("Iterations", 100, 2000, 500, step=100)
+            with col_e:
+                learning_rate = st.slider("Learning rate", 0.01, 0.30, 0.05, 0.01)
+            with col_f:
+                depth = st.slider("Depth", 4, 10, 8, 1)
+
+            use_class_weights = st.checkbox("Use class weights (auto-balanced)", value=True)
+            use_best_model = st.checkbox("Use best model (early stopping)", value=True)
+            early_stopping_rounds = st.number_input("Early stopping rounds", 0, 1000, 100, step=50)
+
+            if st.button("Train CatBoost Models", type="primary"):
+                hist = _load_flat_history(db_path=db_path)
+                if hist.empty:
+                    st.error("No historical data found.")
+                else:
+                    try:
+                        metrics = _train_catboost_models(
+                            hist,
+                            db_path=db_path,
+                            test_size=float(test_size),
+                            random_state=int(random_state),
+                            iterations=int(iterations),
+                            learning_rate=float(learning_rate),
+                            depth=int(depth),
+                            use_class_weights=bool(use_class_weights),
+                            use_best_model=bool(use_best_model),
+                            early_stopping_rounds=int(early_stopping_rounds),
+                        )
+                        st.session_state.catboost_metrics = metrics
+                        st.success("Training complete. Models saved to disk.")
+                    except Exception as e:
+                        st.error(f"Training failed: {e}")
+
+            metrics = st.session_state.get("catboost_metrics")
+            if isinstance(metrics, dict):
+                st.markdown("**Latest Training Metrics**")
+                st.json(metrics)
+
+            st.markdown("---")
+            st.markdown("**Inference on Current Race**")
+            if no_data_loaded or no_filtered_data:
+                st.info("Load a flat race first to run inference.")
+            else:
+                if st.button("Run Inference"):
+                    try:
+                        pred_df = _predict_catboost(race_df)
+                        # Display key columns when available
+                        display_cols = []
+                        for c in ["CHEVAL", "Cheval", "NÂ°", "N", "NUM", "Num", "Numero", "COTE", "Cote"]:
+                            if c in pred_df.columns:
+                                display_cols.append(c)
+                        display_cols += [c for c in ["p_win", "p_place"] if c in pred_df.columns]
+                        if display_cols:
+                            st.dataframe(pred_df[display_cols].sort_values("p_win", ascending=False), use_container_width=True)
+                        else:
+                            st.dataframe(pred_df, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Inference failed: {e}")
+
+            st.markdown("---")
+            st.markdown("**Feature Importance**")
+            if st.button("Load Feature Importance"):
+                try:
+                    with open("catboost_meta.json", "r") as f:
+                        meta = json.load(f)
+                    feature_names = meta.get("feature_names", [])
+
+                    model_win = CatBoostClassifier()
+                    model_place = CatBoostClassifier()
+                    model_win.load_model("catboost_winner_model.cbm")
+                    model_place.load_model("catboost_place_model.cbm")
+
+                    fi_win = _feature_importance_df(model_win, feature_names)
+                    fi_place = _feature_importance_df(model_place, feature_names)
+
+                    if not fi_win.empty:
+                        st.markdown("Winner model")
+                        st.dataframe(fi_win.head(30), use_container_width=True)
+                        st.bar_chart(fi_win.head(20).set_index("feature"))
+                    else:
+                        st.info("No feature importance available for winner model.")
+
+                    if not fi_place.empty:
+                        st.markdown("Place model")
+                        st.dataframe(fi_place.head(30), use_container_width=True)
+                        st.bar_chart(fi_place.head(20).set_index("feature"))
+                    else:
+                        st.info("No feature importance available for place model.")
+                except Exception as e:
+                    st.error(f"Failed to load feature importance: {e}")
+
+            st.markdown("---")
+            st.markdown("**SHAP Summary (Current Race)**")
+            st.caption("Computes mean |SHAP| per feature. Can be slow on large feature sets.")
+            if no_data_loaded or no_filtered_data:
+                st.info("Load a flat race first to compute current-race SHAP.")
+            else:
+                shap_source = st.radio("SHAP source", ["Historical sample", "Current race"], horizontal=True)
+                sample_size = st.number_input("Historical sample size", 100, 5000, 800, step=100)
+                sample_seed = st.number_input("Historical sample seed", value=42, step=1)
+
+                if st.button("Compute SHAP Summary"):
+                    with st.spinner("Computing SHAP summaries..."):
+                        try:
+                            progress = st.progress(0)
+                            step = st.empty()
+                            step.write("Step 1/3: Load data")
+                            with open("catboost_meta.json", "r") as f:
+                                meta = json.load(f)
+                            feature_names = meta.get("feature_names", [])
+                            cat_cols = meta.get("cat_cols", [])
+                            numeric_stats = meta.get("numeric_stats", {})
+
+                            with open("catboost_vocab.json", "r") as f:
+                                vocab = json.load(f)
+
+                            if shap_source == "Historical sample":
+                                hist_df = _load_flat_history(db_path=db_path)
+                                if hist_df.empty:
+                                    raise RuntimeError("No historical data found for SHAP.")
+                                hist_df = hist_df.sample(
+                                    n=min(int(sample_size), len(hist_df)),
+                                    random_state=int(sample_seed),
+                                )
+                                X, _, _, _, _ = _prepare_flat_catboost_features(hist_df, vocab=vocab, fit_vocab=False)
+                            else:
+                                X, _, _, _, _ = _prepare_flat_catboost_features(race_df, vocab=vocab, fit_vocab=False)
+                            X = _align_features_for_inference(X, feature_names, cat_cols)
+                            if isinstance(numeric_stats, dict) and numeric_stats:
+                                X = _apply_numeric_stats(X, numeric_stats)
+                            cat_indices = [X.columns.get_loc(c) for c in cat_cols if c in X.columns]
+                            progress.progress(0.66)
+                            step.write("Step 2/3: Build pool")
+                            pool = Pool(X, cat_features=cat_indices)
+
+                            model_win = CatBoostClassifier()
+                            model_place = CatBoostClassifier()
+                            model_win.load_model("catboost_winner_model.cbm")
+                            model_place.load_model("catboost_place_model.cbm")
+
+                            progress.progress(0.85)
+                            step.write("Step 3/3: Compute SHAP")
+                            shap_win = _shap_summary_df(model_win, pool, feature_names)
+                            shap_place = _shap_summary_df(model_place, pool, feature_names)
+                            progress.progress(1.0)
+                            time.sleep(0.6)
+                            progress.empty()
+                            step.empty()
+
+                            if not shap_win.empty:
+                                st.markdown("Winner model")
+                                st.dataframe(shap_win.head(30), use_container_width=True)
+                                st.bar_chart(shap_win.head(20).set_index("feature"))
+                            else:
+                                st.info("No SHAP summary available for winner model.")
+
+                            if not shap_place.empty:
+                                st.markdown("Place model")
+                                st.dataframe(shap_place.head(30), use_container_width=True)
+                                st.bar_chart(shap_place.head(20).set_index("feature"))
+                            else:
+                                st.info("No SHAP summary available for place model.")
+                        except Exception as e:
+                            st.error(f"SHAP computation failed: {e}")
