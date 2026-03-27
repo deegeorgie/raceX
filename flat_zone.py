@@ -115,8 +115,6 @@ def get_former_weight_from_row(row):
     except Exception:
         return None
 
-
-
 def scrape_zone_turf(url, progress_callback=None, cancel_check=None):
     """Scrape tables using pandas read_html with class and course ID filters
     Accepts an optional progress_callback(percent:int, message:str) to report progress.
@@ -238,13 +236,20 @@ def scrape_zone_turf(url, progress_callback=None, cancel_check=None):
             nom_course = course_table.find_previous('div', class_='nomCourse')
             if nom_course:
                 text = nom_course.get_text(strip=True)
-                # Extract race ID (R2 Course N°2)
-                race_match = re.search(r'(R\d+\s+Course\s+N°\d+)', text)
+                # normalize encoding artifacts around the N marker
+                text = re.sub(r'N\D+(\d+)', r'N\1', text)
+                # Extract race ID (R2 Course N2)
+                race_match = re.search(r'(R\d+\s+Course\s+N\d+)', text)
                 if race_match:
                     race_id = race_match.group(1)
                 # Extract prize name (everything after ':')
                 if ':' in text:
-                    prize_name = text.split(':', 1)[1].split('-')[1].strip()
+                    try:
+                        after_colon = text.split(':', 1)[1]
+                        parts = after_colon.split('-', 1)
+                        prize_name = parts[1].strip() if len(parts) > 1 else after_colon.strip()
+                    except Exception:
+                        prize_name = None
 
             # Find numerical id of race in div with class 'bloc data course' before this table
             # Prefer extracting numeric id from the link href if available, otherwise parse text
@@ -545,14 +550,14 @@ def scrape_zone_turf(url, progress_callback=None, cancel_check=None):
                 # Create a new column 'Dech.' from Cheval column by extracting any digits in parentheses that are followed by kg (e.g., (58kg))
                 if 'REF_COURSE' in final_df.columns:
                     try:
-                        final_df['num_starters'] = final_df.groupby('REF_COURSE').transform('size')
+                        final_df['starters'] = final_df.groupby('REF_COURSE').transform('size')
                     except Exception as e:
                         print(f"[WARN] Failed to compute num_starters: {e}")
 
                 # Create a new column 'j-Dech.' from the Jockey column by extracting any digits in parentheses and converting to numeric
                 if 'REF_COURSE' in final_df.columns:
                     try:
-                        final_df['REF_COURSE'] = final_df['REF_COURSE'].str.replace(r'R(\d+)\s+Course\s+N°(\d+)', r'R\1C\2', regex=True)
+                        final_df['REF_COURSE'] = final_df['REF_COURSE'].str.replace(r'R(\d+)\s+Course\s+N(\d+)', r'R\1C\2', regex=True)
                         final_df['j-Dech.'] = pd.to_numeric(final_df['j-Dech.'], errors='coerce')
                     except Exception as e:
                         print(f"[WARN] Failed to extract j-Dech.: {e}")
@@ -665,7 +670,7 @@ def scrape_zone_turf(url, progress_callback=None, cancel_check=None):
                 if 'SA' in final_df.columns:
                     try:
                         sa_split = final_df['SA'].str.extract(r'([A-Za-z]+)\s*(\d+)')
-                        final_df['Sex'] = sa_split[0].map({'H':  0, 'M': 1, 'F': 2 })
+                        final_df['Sexe'] = sa_split[0].map({'H':  0, 'M': 1, 'F': 2 })
                         final_df['Age'] = sa_split[1]
                     except Exception as e:
                         print(f"[WARN] Failed to extract Sex/Age: {e}")
@@ -779,12 +784,21 @@ def scrape_zone_turf(url, progress_callback=None, cancel_check=None):
                     except Exception as e:
                         print(f"[WARN] Failed to extract HIPPOID: {e}")
 
-                # create a new column for surface type from race_conditions/descriptif
-                if 'race_conditions' in final_df.columns:
+                # create a new column for surface type from descriptif
+                if 'DESCRIPTIF' in final_df.columns:
                     try:
-                        final_df['Surface'] = final_df['DESCRIPTIF'].apply(
-                            lambda x: 'Psf' if pd.notna(x) and 'turf' in str(x).lower() else ('Dirt' if pd.notna(x) and 'dirt' in str(x).lower() else None)
-                        )
+                        def _surface_from_desc(x):
+                            if pd.isna(x):
+                                return None
+                            s = str(x).lower()
+                            if 'psf' in s:
+                                return 'Psf'
+                            if 'turf' in s:
+                                return 'Turf'
+                            if 'dirt' in s:
+                                return 'Dirt'
+                            return None
+                        final_df['Surface'] = final_df['DESCRIPTIF'].apply(_surface_from_desc)
                     except Exception as e:
                         print(f"[WARN] Failed to extract Surface: {e}")
 
@@ -804,14 +818,14 @@ def scrape_zone_turf(url, progress_callback=None, cancel_check=None):
                         def extract_race_type(text):
                             if pd.isna(text):
                                 return None
-                            text_str = str(text)
-                            if 'Plat' in text_str:
+                            text_str = str(text).lower()
+                            if 'plat' in text_str:
                                 return 1
-                            elif 'Steeple' in text_str:
+                            elif 'steeple' in text_str:
                                 return 2
-                            elif 'Cross' in text_str:
+                            elif 'cross' in text_str:
                                 return 4
-                            elif 'Haies' in text_str:
+                            elif 'haies' in text_str:
                                 return 3
                             else:
                                 return None
@@ -841,10 +855,10 @@ def scrape_zone_turf(url, progress_callback=None, cancel_check=None):
                     except Exception as e:
                         print(f"[WARN] Failed to clean Cheval: {e}")
 
-                # Clean the race_id column so that instead of 'R2 Course N°2' it is just 'R2C2'
+                # Clean the race_id column so that instead of 'R2 Course N2' it is just 'R2C2'
                 if 'race_id' in final_df.columns:
                     try:
-                        final_df['race_id'] = final_df['race_id'].str.replace(r'R(\d+)\s+Course\s+N°(\d+)', r'R\1C\2', regex=True)
+                        final_df['race_id'] = final_df['race_id'].str.replace(r'R(\d+)\s+Course\s+N(\d+)', r'R\1C\2', regex=True)
                     except Exception as e:
                         print(f"[WARN] Failed to clean race_id: {e}")
 
@@ -855,12 +869,14 @@ def scrape_zone_turf(url, progress_callback=None, cancel_check=None):
                     except Exception as e:
                         print(f"[WARN] Failed to clean Corde: {e}")
 
-                # Clean the Gains column to strip '€' and spaces
-                if 'Gains' in final_df.columns:
+                # Clean the Gain column to strip '???' and spaces (normalize Gains -> Gain)
+                if 'Gains' in final_df.columns and 'Gain' not in final_df.columns:
+                    final_df = final_df.rename(columns={'Gains': 'Gain'})
+                if 'Gain' in final_df.columns:
                     try:
-                        final_df['Gains'] = final_df['Gains'].str.replace('€', '', regex=False).str.replace('\xa0', '', regex=False).str.strip()
+                        final_df['Gain'] = final_df['Gain'].astype(str).str.replace('???', '', regex=False).str.replace('\xa0', '', regex=False).str.strip()
                     except Exception as e:
-                        print(f"[WARN] Failed to clean Gains: {e}")
+                        print(f"[WARN] Failed to clean Gain: {e}")
 
                 # Add meeting_id column (same for all rows on a page)
                 try:
@@ -953,40 +969,65 @@ def scrape_zone_turf(url, progress_callback=None, cancel_check=None):
                 except Exception as e:
                     print(f"[WARN] Failed to compute IF: {e}")
 
-                # Compute success coefficient for each horse based on their music.
-                # The music tokens usually use discipline letters like 'a' or 'm'.
-                # Map our numeric dscp code to a token character and
-                # fall back to a bayesian score when no discipline-specific data.
-                disc_char = 'a'  # default to flat-style token ('a')
-                if 'dscp' in final_df.columns:
+                # ------------------------------------------------------------
+                # SUCCESS COEFFICIENT (S_COEFF)
+                # Computes performance score based on discipline-specific music.
+                # ------------------------------------------------------------
+
+                # 1. Determine discipline character (p/s/h/c)
+                disc_char = None
+
+                if "dscp" in final_df.columns:
                     try:
-                        dscp_sample = final_df['dscp'].dropna().unique()
-                        if len(dscp_sample) > 0:
-                            val = dscp_sample[0]
-                            # map numeric codes to token letters used in music strings
-                            if val == 1:  # Plat
-                                disc_char = 'a'
-                            elif val in (2, 3, 4):  # Steeple/Haies/Cross -> use 'm' as generic
-                                disc_char = 'm'
+                        # Extract unique non-null discipline codes
+                        dvals = final_df["dscp"].dropna().unique()
+
+                        if len(dvals) > 0:
+                            code = int(dvals[0])
+
+                            DISC_MAP = {
+                                1: "p",  # Plat
+                                2: "s",  # Steeple
+                                3: "h",  # Haies
+                                4: "c",  # Cross
+                            }
+
+                            disc_char = DISC_MAP.get(code, None)
+
+                            if disc_char is None:
+                                print(f"[WARN] Unknown discipline code: {code}")
+
                     except Exception as e:
-                        print(f"[WARN] Failed to determine discipline for S_COEFF: {e}")
+                        print(f"[WARN] Failed to determine disc_char: {e}")
 
-                if 'Musique' in final_df.columns:
+
+                # 2. Compute S_COEFF
+                if "Musique" in final_df.columns:
                     try:
-                        def _compute_scoeff(m):
+                        def compute_scoeff(music):
+                            """
+                            Wraps success_coefficient() with fallbacks:
+                            - Empty / NaN music → return Bayesian score from empty string.
+                            - If discipline-specific score = 0 → fallback to Bayesian aggregate.
+                            """
                             try:
-                                if pd.isna(m) or not isinstance(m, str) or not m.strip():
+                                if pd.isna(music) or not isinstance(music, str) or not music.strip():
                                     return bayesian_performance_score("")
-                                sc = success_coefficient(m, disc_char)
-                                # if discipline-specific score is zero (no matching tokens),
-                                # fall back to the bayesian aggregate score
-                                if sc == 0.0:
-                                    return bayesian_performance_score(str(m))
-                                return sc
-                            except Exception:
-                                return bayesian_performance_score(str(m) if pd.notna(m) else "")
 
-                        final_df['S_COEFF'] = final_df['Musique'].apply(_compute_scoeff)
+                                # discipline-specific coefficient
+                                sc = success_coefficient(music, disc_char)
+
+                                # fallback if no tokens matched the discipline
+                                if sc == 0.0:
+                                    return bayesian_performance_score(music)
+
+                                return sc
+
+                            except Exception:
+                                return bayesian_performance_score(music if isinstance(music, str) else "")
+
+                        final_df["S_COEFF"] = final_df["Musique"].apply(compute_scoeff)
+
                     except Exception as e:
                         print(f"[WARN] Failed to compute S_COEFF: {e}")
 
@@ -1006,29 +1047,6 @@ def scrape_zone_turf(url, progress_callback=None, cancel_check=None):
                         final_df['race_date'] = date_parts[0].str.zfill(2) + '/' + date_parts[1].map(month_map) + '/' + date_parts[2]
                     except Exception as e:
                         print(f"[WARN] Failed to clean race_date: {e}")
-                
-                # Compute IF (Fitness Indicator) from Musique (race history)
-                if 'Musique' in final_df.columns:
-                    try:
-                        final_df['IF'] = final_df['Musique'].apply(lambda x: bayesian_performance_score(str(x) if pd.notna(x) else ""))
-                    except Exception as e:
-                        print(f"[WARN] Failed to compute IF: {e}")
-                
-                # Compute IC (Class Indicator) = Poids - Cote (higher is better)
-                try:
-                    poids_col = 'Poids' if 'Poids' in final_df.columns else ('POIDS' if 'POIDS' in final_df.columns else None)
-                    if poids_col:
-                        final_df['IC'] = pd.to_numeric(final_df[poids_col], errors='coerce') - pd.to_numeric(final_df['Cote'], errors='coerce')
-                except Exception as e:
-                    print(f"[WARN] Failed to compute IC: {e}")
-                
-                # Compute S_COEFF (Success Coefficient) - same as IF using bayesian score
-                if 'Musique' in final_df.columns:
-                    try:
-                        final_df['S_COEFF'] = final_df['Musique'].apply(lambda x: bayesian_performance_score(str(x) if pd.notna(x) else ""))
-                    except Exception as e:
-                        print(f"[WARN] Failed to compute S_COEFF: {e}")
-                
             except Exception as e:
                 print(f"[WARN] Outer data cleaning error: {e}")
 

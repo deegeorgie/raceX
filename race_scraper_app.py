@@ -2777,6 +2777,11 @@ def compute_composite_score(race_df, weights=None):
             # Fallback: create Cheval from index
             result['Cheval'] = result.index.astype(str)
         result['Composite'] = weighted
+        # Normalized composite score for downstream use (0-1 already by design)
+        try:
+            result['CS_norm'] = pd.to_numeric(result['Composite'], errors='coerce').clip(0, 1)
+        except Exception:
+            result['CS_norm'] = result['Composite']
         # expose computed normalized Corde/Age/Sex scores if available for downstream display
         try:
             if 'Corde' in norm.columns:
@@ -2818,6 +2823,70 @@ def compute_composite_score(race_df, weights=None):
                 result['COTE'] = race_df['COTE']
             elif 'Cote' in race_df.columns:
                 result['Cote'] = race_df['Cote']
+        # Include FORME if available (used by FinalUpset)
+        if 'FORME' not in result.columns and 'FORME' in race_df.columns:
+            result['FORME'] = race_df['FORME']
+        if 'FORME_T' not in result.columns and 'FORME_T' in race_df.columns:
+            result['FORME_T'] = race_df['FORME_T']
+        if 'FORME_J' not in result.columns and 'FORME_J' in race_df.columns:
+            result['FORME_J'] = race_df['FORME_J']
+
+        # --- FinalUpset: (1 - p) * horse_form * FORME_T * FORME_J ---
+        # p = 1 / COTE (decimal odds); FORME lower is better.
+        try:
+            cote_col = 'COTE' if 'COTE' in result.columns else ('Cote' if 'Cote' in result.columns else None)
+            if cote_col:
+                cote_num = pd.to_numeric(result[cote_col], errors='coerce')
+                # Min-max normalize within each race (optionally inverted)
+                def _minmax_by_race(series: pd.Series, invert: bool = False) -> pd.Series:
+                    if series is None:
+                        return pd.Series(0.5, index=race_df.index)
+                    s = pd.to_numeric(series, errors='coerce')
+                    if 'REF_COURSE' in race_df.columns:
+                        grp = race_df['REF_COURSE']
+                    elif 'ID_COURSE' in race_df.columns:
+                        grp = race_df['ID_COURSE']
+                    else:
+                        grp = None
+                    if grp is None:
+                        smin = s.min()
+                        smax = s.max()
+                        if pd.isna(smin) or pd.isna(smax) or smax == smin:
+                            return pd.Series(0.5, index=s.index)
+                        base = ((s - smin) / (smax - smin)).clip(0, 1)
+                        norm = (1 - base) if invert else base
+                        return norm.fillna(0.5)
+                    def _norm(g):
+                        gmin = g.min()
+                        gmax = g.max()
+                        if pd.isna(gmin) or pd.isna(gmax) or gmax == gmin:
+                            return pd.Series(0.5, index=g.index)
+                        base = ((g - gmin) / (gmax - gmin)).clip(0, 1)
+                        return (1 - base) if invert else base
+                    return s.groupby(grp).apply(_norm).reset_index(level=0, drop=True).fillna(0.5)
+
+                # Horse form component:
+                # - Flat: FORME (lower is better)
+                # - Trot: FA (or FM) where lower is better
+                # - Fallback: S_COEFF (higher is better)
+                if 'FORME' in race_df.columns:
+                    forme_num = pd.to_numeric(race_df['FORME'], errors='coerce')
+                    forme_score = 1 / (1 + forme_num)
+                elif 'FA' in race_df.columns or 'FM' in race_df.columns:
+                    fa_col = 'FA' if 'FA' in race_df.columns else 'FM'
+                    forme_score = _minmax_by_race(race_df.get(fa_col), invert=True)
+                elif 'S_COEFF' in race_df.columns:
+                    forme_score = _minmax_by_race(race_df.get('S_COEFF'), invert=False)
+                else:
+                    forme_score = pd.Series(1.0, index=race_df.index)
+
+                forme_t = _minmax_by_race(race_df.get('FORME_T'), invert=True)
+                forme_j = _minmax_by_race(race_df.get('FORME_J'), invert=True)
+                p = 1 / cote_num.replace(0, np.nan)
+                result['FinalUpset'] = (1 - p) * forme_score * forme_t * forme_j
+                result['FinalUpset'] = result['FinalUpset'].round(4)
+        except Exception:
+            pass
 
         # Add individual metric columns from norm table
         for metric in ['IF', 'IC', 'S_COEFF', 'n_weight', 'VALEUR']:
@@ -2825,7 +2894,7 @@ def compute_composite_score(race_df, weights=None):
                 result[metric] = norm[metric].values
         
         # Return limited columns for ranking
-        cols = [c for c in ['Cheval', 'N°', 'COTE', 'Cote', 'Composite'] if c in result.columns]
+        cols = [c for c in ['Cheval', 'N°', 'COTE', 'Cote', 'Composite', 'CS_norm', 'FinalUpset', 'FORME', 'FORME_T', 'FORME_J'] if c in result.columns]
         cols += [c for c in ['IF','IC','S_COEFF','n_weight','VALEUR','Poids','POIDS','Corde','AgeScore','SexScore','Experience','DQ_Risk','Fitness','Slope','REC','Shoeing_Agg'] if c in result.columns]
         return result[cols].sort_values('Composite', ascending=False)
     except Exception as e:

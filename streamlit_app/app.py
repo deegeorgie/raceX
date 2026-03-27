@@ -781,8 +781,8 @@ def _clean_scraped_data(df: pd.DataFrame, race_type: str) -> pd.DataFrame:
                     rename_map[c] = "POIDS"
                 elif cl in ("dech.", "dech"):
                     rename_map[c] = "DECH"
-                elif cl in ("gains",):
-                    rename_map[c] = "GAINS"
+                elif cl in ("gain", "gains"):
+                    rename_map[c] = "GAIN"
             if rename_map:
                 out = out.rename(columns=rename_map)
 
@@ -799,8 +799,8 @@ def _clean_scraped_data(df: pd.DataFrame, race_type: str) -> pd.DataFrame:
                 out["CHEVAL"] = out["CHEVAL"].astype(str).str.strip()
             if "CORDE" in out.columns:
                 out["CORDE"] = out["CORDE"].astype(str).str.replace("c:", "", regex=False).str.strip()
-            if "GAINS" in out.columns:
-                out["GAINS"] = out["GAINS"].astype(str).str.replace("€", "", regex=False).str.replace("\xa0", "", regex=False).str.strip()
+            if "GAIN" in out.columns:
+                out["GAIN"] = out["GAIN"].astype(str).str.replace(r"[^\d]", "", regex=True).str.strip()
             # Clean numeric columns VALEUR/POIDS/DECH
             def _clean_value(val):
                 try:
@@ -837,7 +837,41 @@ def _clean_scraped_data(df: pd.DataFrame, race_type: str) -> pd.DataFrame:
                 except Exception:
                     pass
                 try:
-                    out["S_COEFF"] = out["MUSIQUE"].apply(lambda x: success_coefficient(str(x), "a") if pd.notna(x) else 0.0)
+                    def _disc_letter(val):
+                        if pd.isna(val):
+                            return None
+                        # Map numeric dscp to discipline initial
+                        if isinstance(val, (int, float)):
+                            try:
+                                code = int(val)
+                            except Exception:
+                                code = None
+                            if code == 1:  # Plat
+                                return "p"
+                            if code == 2:  # Steeple
+                                return "s"
+                            if code == 3:  # Haies
+                                return "h"
+                            if code == 4:  # Cross
+                                return "c"
+                            return None
+                        s = str(val).strip()
+                        return s[0].lower() if s else None
+
+                    disc_series = None
+                    if "DSCP" in out.columns:
+                        disc_series = out["DSCP"]
+                    elif "dscp" in out.columns:
+                        disc_series = out["dscp"]
+
+                    if disc_series is not None:
+                        disc_letters = disc_series.apply(_disc_letter)
+                        out["S_COEFF"] = [
+                            success_coefficient(str(m), d) if pd.notna(m) and d else 0.0
+                            for m, d in zip(out["MUSIQUE"], disc_letters)
+                        ]
+                    else:
+                        out["S_COEFF"] = out["MUSIQUE"].apply(lambda x: success_coefficient(str(x), "a") if pd.notna(x) else 0.0)
                 except Exception:
                     pass
     except Exception:
@@ -2333,6 +2367,19 @@ if "history_df" not in st.session_state:
 # Show active race banner
 if st.session_state.selected_ref_course:
     st.caption(f"📍 Analysing race: **{st.session_state.selected_ref_course}** · {len(race_df)} horses")
+    if isinstance(composite_df, pd.DataFrame) and not composite_df.empty and "FinalUpset" in composite_df.columns:
+        try:
+            upset_df = composite_df.dropna(subset=["FinalUpset"]).nlargest(6, "FinalUpset")
+            if not upset_df.empty:
+                labels = []
+                for _, row in upset_df.iterrows():
+                    num = row.get("N°") if "N°" in upset_df.columns else row.get("N")
+                    if pd.notna(num):
+                        labels.append(f"{int(num)} — {row['FinalUpset']:.3f}")
+                if labels:
+                    st.info("High upset potential: " + " | ".join(labels))
+        except Exception:
+            pass
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
 if race_type == "trot":

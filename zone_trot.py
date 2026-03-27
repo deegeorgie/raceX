@@ -5,7 +5,7 @@ import requests
 import sqlite3
 import time
 import re
-from model_functions import parse_performance_string, compute_d_perf, compute_slope, slope_to_label
+from model_functions import parse_performance_string, compute_d_perf, compute_slope, slope_to_label, bayesian_performance_score
 
 def get_music_from_profile(link):
     """Extract music text from jockey/trainer profile page"""
@@ -454,6 +454,12 @@ def scrape_zone_turf_trot(url, progress_callback=None, cancel_check=None):
                 final_df['trainer_music'] = final_df['trainer_music'].fillna('').astype(str).str.replace('Musique :', '', regex=False).str.strip()
                 final_df['trainer_music'] = final_df['trainer_music'].replace('', None)
             
+            # Let's add two columns 'FORME_J' and 'FORME_T' that compute a simple performance score based on the music string and using the bayesian performance parsing function from model_functions
+            if 'jockey_music' in final_df.columns:
+                final_df['FORME_J'] = final_df['jockey_music'].apply(lambda s: bayesian_performance_score(s) if pd.notna(s) else None)
+            if 'trainer_music' in final_df.columns:
+                final_df['FORME_T'] = final_df['trainer_music'].apply(lambda s: bayesian_performance_score(s) if pd.notna(s) else None)
+
             # Clean race_date to dd/mm/yyyy format
             if 'race_date' in final_df.columns:
                 date_parts = final_df['race_date'].str.extract(r'(\d{1,2})\s+(\w+)\s+(\d{4})')
