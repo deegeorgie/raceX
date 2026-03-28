@@ -158,6 +158,19 @@ st.markdown(
     button {
         border-radius: 10px !important;
     }
+    .badge-quinte {
+        display: inline-block;
+        padding: 0.15rem 0.45rem;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        color: #ffffff;
+        background: linear-gradient(135deg, #0f766e 0%, #0ea5a4 100%);
+        border: 1px solid rgba(15, 118, 110, 0.35);
+        border-radius: 999px;
+        text-transform: uppercase;
+        box-shadow: 0 6px 16px rgba(15, 118, 110, 0.25);
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -189,6 +202,14 @@ def show_df(df: pd.DataFrame, height: int = 400):
         st.info("No data available.")
     else:
         st.dataframe(df, use_container_width=True, height=height)
+
+def _is_truthy_flag(val) -> bool:
+    if isinstance(val, (bool, np.bool_)):
+        return bool(val)
+    if pd.isna(val):
+        return False
+    s = str(val).strip().lower()
+    return s in {"true", "1", "yes", "y", "oui", "o", "t"}
 
 
 # CatBoost preprocessing helpers (flat history)
@@ -2254,6 +2275,21 @@ with st.sidebar:
         st.markdown("**Filter by Race**")
         ref_series = full_df["REF_COURSE"].astype(str).str.strip()
         ref_courses = sorted(ref_series.dropna().unique().tolist(), key=str)
+        # Build a per-race Q+ flag (Quinte) for display
+        qplus_flags = {}
+        if "Q+" in full_df.columns:
+            qplus_flags = (
+                full_df.assign(_ref=ref_series, _q=full_df["Q+"].apply(_is_truthy_flag))
+                .groupby("_ref")["_q"]
+                .any()
+                .to_dict()
+            )
+
+        def _format_ref_course(ref_val):
+            ref_key = str(ref_val)
+            if qplus_flags.get(ref_key, False):
+                return f"{ref_key} [Q+]"
+            return ref_key
         # Default to previously selected value, or first in list
         default_idx = 0
         if st.session_state.selected_ref_course in ref_courses:
@@ -2262,10 +2298,15 @@ with st.sidebar:
             "REF_COURSE",
             ref_courses,
             index=default_idx,
-            format_func=str,
+            format_func=_format_ref_course,
         )
         if chosen_id != st.session_state.selected_ref_course:
             st.session_state.selected_ref_course = chosen_id
+        if qplus_flags.get(str(st.session_state.selected_ref_course), False):
+            st.markdown(
+                '<span class="badge-quinte">Quinte+</span>',
+                unsafe_allow_html=True,
+            )
 
         filtered = full_df[ref_series == str(st.session_state.selected_ref_course)].copy()
         composite = compute_composite_score(filtered, weights=st.session_state.current_weights)
@@ -2366,7 +2407,16 @@ if "history_df" not in st.session_state:
 
 # Show active race banner
 if st.session_state.selected_ref_course:
-    st.caption(f"📍 Analysing race: **{st.session_state.selected_ref_course}** · {len(race_df)} horses")
+    qplus_selected = False
+    if "Q+" in race_df.columns and not race_df.empty:
+        qplus_selected = race_df["Q+"].apply(_is_truthy_flag).any()
+    badge_html = ' <span class="badge-quinte">Quinte+</span>' if qplus_selected else ""
+    st.markdown(
+        f'<div style="font-size:0.85rem;color:#6b7280;">📍 Analysing race: '
+        f'<strong>{st.session_state.selected_ref_course}</strong> · '
+        f'{len(race_df)} horses{badge_html}</div>',
+        unsafe_allow_html=True,
+    )
     if isinstance(composite_df, pd.DataFrame) and not composite_df.empty and "FinalUpset" in composite_df.columns:
         try:
             upset_df = composite_df.dropna(subset=["FinalUpset"]).nlargest(6, "FinalUpset")
