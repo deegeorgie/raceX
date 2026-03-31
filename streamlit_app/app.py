@@ -190,6 +190,8 @@ for key, default in {
     "last_summary_df": None,
     "current_weights": None,
     "flat_analysis": None,
+    "prepared_trot_pdf": None,
+    "prepared_trot_pdf_name": None,
     "mc_last_key": None,
 }.items():
     if key not in st.session_state:
@@ -1978,6 +1980,123 @@ def _build_flat_analysis_payload(race_df: pd.DataFrame, composite_df: pd.DataFra
     }
 
 
+def _build_trott_analysis_payload(race_df: pd.DataFrame, composite_df: pd.DataFrame):
+    if race_df is None or race_df.empty or composite_df is None or composite_df.empty:
+        return None
+    summary_df = analyze_trotting_summary_prognosis(race_df, composite_df)
+    if summary_df is None or summary_df.empty:
+        return None
+    def _join_horses(df):
+        if df is None or df.empty:
+            return ""
+        return "  ".join(df["Horse"].astype(str).tolist())
+    summary_text = _join_horses(summary_df[summary_df["Type"] == "SUMMARY"])
+    prognosis_text = _join_horses(summary_df[summary_df["Type"] == "PROGNOSIS"])
+    exclusive_text = _join_horses(summary_df[summary_df["Type"] == "EXCLUSIVES"])
+    return {
+        "race_df": race_df,
+        "composite_df": composite_df,
+        "summary_text": summary_text,
+        "prognosis_text": prognosis_text,
+        "exclusive_text": exclusive_text,
+    }
+
+
+def _analysis_pdf_bytes_trot(race_df: pd.DataFrame, composite_df: pd.DataFrame,
+                             summary_text: str, prognosis_text: str,
+                             exclusive_text: str) -> bytes:
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+        from reportlab.lib.enums import TA_CENTER
+        from reportlab.lib import colors
+        import io
+    except ImportError:
+        raise
+
+    header_text_racex, footer_text_racex, header_style, footer_style, icon_path = get_pdf_header_footer()
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=60, bottomMargin=30)
+    story = []
+    styles = getSampleStyleSheet()
+
+    if icon_path:
+        try:
+            img = Image(icon_path, width=0.5*inch, height=0.5*inch)
+            story.append(img)
+        except Exception:
+            pass
+    story.append(Paragraph(header_text_racex, header_style))
+    story.append(Spacer(1, 6))
+
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=14, spaceAfter=12, alignment=TA_CENTER)
+    header_style_custom = ParagraphStyle('CustomHeader', parent=styles['Heading2'], fontSize=10, spaceAfter=10, textColor=colors.darkblue)
+    italic_style = ParagraphStyle('CustomItalic', parent=styles['Normal'], fontSize=9, fontName='Helvetica-Oblique', spaceAfter=10, textColor=colors.grey)
+    section_style = ParagraphStyle('SectionStyle', parent=styles['Normal'], fontSize=9, spaceAfter=4)
+
+    header_text = "Analyse de Course (Trot)"
+    story.append(Paragraph(header_text, title_style))
+
+    race_date = str(race_df['RACE_DATE'].iloc[0]) if 'RACE_DATE' in race_df.columns else ''
+    ref_course = str(race_df['REF_COURSE'].iloc[0]) if 'REF_COURSE' in race_df.columns else 'race'
+    hippodrome = str(race_df['HIPPODROME'].iloc[0]) if 'HIPPODROME' in race_df.columns else ''
+    metadata_text = f"<b>Reference:</b> {ref_course} | <b>Date:</b> {race_date} | <b>Hippodrome:</b> {hippodrome}"
+    story.append(Paragraph(metadata_text, styles['Normal']))
+    story.append(Spacer(1, 6))
+
+    if composite_df is not None and not composite_df.empty:
+        story.append(Paragraph("Classement des Chevaux (Score Composite)", header_style_custom))
+        df_sorted = composite_df.sort_values('Composite', ascending=False)
+        num_col = _detect_horse_num_col(df_sorted) or "N°"
+        table_data = [['Pos.', 'N°', 'Cheval', 'COTE', 'Score Composite']]
+        for i, (_, row) in enumerate(df_sorted.iterrows(), 1):
+            cote_val = row.get('COTE', row.get('Cote', ''))
+            table_data.append([
+                str(i),
+                str(row.get(num_col, '')),
+                str(row.get('Cheval', row.get('CHEVAL', ''))),
+                str(cote_val),
+                f"{row.get('Composite', 0):.2f}"
+            ])
+        table = Table(table_data, colWidths=[0.6*inch, 0.6*inch, 2.0*inch, 0.8*inch, 0.9*inch])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey])
+        ]))
+        story.append(table)
+        story.append(Spacer(1, 12))
+
+    story.append(Paragraph("Analyse Trotting", header_style_custom))
+    sections = [
+        ("Synthèse", summary_text),
+        ("Pronostic", prognosis_text),
+        ("Exclusives", exclusive_text),
+    ]
+    for section_title, section_text in sections:
+        if section_text:
+            story.append(Paragraph(f"<b>{section_title}:</b> {section_text}", section_style))
+        else:
+            story.append(Paragraph(f"<b>{section_title}:</b> <i>(aucun resultat)</i>", section_style))
+        story.append(Spacer(1, 2))
+
+    story.append(Spacer(1, 24))
+    story.append(Paragraph(footer_text_racex, footer_style))
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
+
+
 def _analysis_pdf_bytes_flat(race_df: pd.DataFrame, composite_df: pd.DataFrame,
                              prognosis_text: str, summary_text: str,
                              summary_prognosis_text: str, favorable_cordes_text: str,
@@ -2031,6 +2150,25 @@ def _analysis_pdf_bytes_flat(race_df: pd.DataFrame, composite_df: pd.DataFrame,
         story.append(Paragraph(f"<i>{ext_conditions}</i>", italic_style))
         story.append(Spacer(1, 8))
 
+    upset_text = ""
+    if isinstance(composite_df, pd.DataFrame) and not composite_df.empty and "FinalUpset" in composite_df.columns:
+        try:
+            upset_df = composite_df.dropna(subset=["FinalUpset"])
+            upset_df = upset_df[upset_df["FinalUpset"] != 0]
+            if not upset_df.empty:
+                upset_df = upset_df.nlargest(6, "FinalUpset")
+                labels = []
+                num_col = _detect_horse_num_col(upset_df) or ("N°" if "N°" in upset_df.columns else "N")
+                for _, row in upset_df.iterrows():
+                    num_val = row.get(num_col, row.get("N", ""))
+                    if isinstance(num_val, (int, float)) and not pd.isna(num_val) and float(num_val).is_integer():
+                        labels.append(str(int(num_val)))
+                    else:
+                        labels.append(str(num_val))
+                upset_text = "  ".join(labels)
+        except Exception:
+            upset_text = ""
+
     if composite_df is not None and not composite_df.empty:
         story.append(Paragraph("Classement des Chevaux (Score Composite)", header_style_custom))
         df_sorted = composite_df.sort_values('Composite', ascending=False)
@@ -2066,7 +2204,7 @@ def _analysis_pdf_bytes_flat(race_df: pd.DataFrame, composite_df: pd.DataFrame,
     sections = [
         ("Notre Prono Flash", prognosis_text),
         ("Synthese (Composite)", summary_text),
-        ("[TARGET] Intersection Synthese+Prono Flash", summary_prognosis_text),
+        ("Chevaux au fort potentiel d'upset", upset_text or summary_prognosis_text),
         ("Cordes Favorables", favorable_cordes_text),
         ("Dans le Prono Uniquement", prognosis_only_text),
         ("Exclusif (Synthese seulement)", exclusive_text),
@@ -2224,6 +2362,42 @@ with st.sidebar:
                     file_name=st.session_state.get("prepared_flat_pdf_name", filename),
                     mime="application/pdf",
                 )
+
+        if race_type == "trot" and not st.session_state.filtered_df.empty and not st.session_state.composite_df.empty:
+            ta = _build_trott_analysis_payload(
+                st.session_state.filtered_df,
+                st.session_state.composite_df,
+            )
+            if isinstance(ta, dict):
+                ref_course = str(ta["race_df"]['REF_COURSE'].iloc[0]) if 'REF_COURSE' in ta["race_df"].columns else 'race'
+                race_date = str(ta["race_df"]['RACE_DATE'].iloc[0]) if 'RACE_DATE' in ta["race_df"].columns else ''
+                date_clean = race_date.replace('/', '').replace('-', '') if race_date else ''
+                filename = f"{date_clean}_{ref_course}_trot_analysis.pdf" if date_clean else f"{ref_course}_trot_analysis.pdf"
+
+                if st.button("Prepare Trotting Analysis PDF", key="prep_trot_pdf"):
+                    try:
+                        st.session_state.prepared_trot_pdf = _analysis_pdf_bytes_trot(
+                            ta["race_df"],
+                            ta["composite_df"],
+                            ta["summary_text"],
+                            ta["prognosis_text"],
+                            ta["exclusive_text"],
+                        )
+                        st.session_state.prepared_trot_pdf_name = filename
+                    except ImportError:
+                        st.session_state.prepared_trot_pdf = None
+                        st.error("ReportLab is required for PDF export. Install it with `pip install reportlab`.")
+                    except Exception as e:
+                        st.session_state.prepared_trot_pdf = None
+                        st.error(f"Trotting analysis PDF export failed: {e}")
+
+                if st.session_state.get("prepared_trot_pdf"):
+                    st.download_button(
+                        "Download Trotting Analysis PDF",
+                        data=st.session_state.prepared_trot_pdf,
+                        file_name=st.session_state.get("prepared_trot_pdf_name", filename),
+                        mime="application/pdf",
+                    )
 
     st.markdown("---")
     if st.button("🚀 Scrape & Analyse", use_container_width=True, type="primary"):
