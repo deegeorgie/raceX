@@ -30,7 +30,8 @@ def get_music_from_profile(link):
     
     try:
         full_url = f"https://zone-turf.fr{link}"
-        response = requests.get(full_url)
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(full_url, headers=headers)
         soup = BeautifulSoup(response.content, 'html.parser')
         
         fiche_div = soup.find('div', class_='fiche')
@@ -55,7 +56,8 @@ def get_former_weight_from_link(link):
 
     try:
         full_url = f"https://zone-turf.fr{link}"
-        resp = requests.get(full_url, timeout=10)
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(full_url, headers=headers, timeout=10)
         soup = BeautifulSoup(resp.content, 'html.parser')
 
         # locate the div that contains course data; match when both tokens present
@@ -168,7 +170,8 @@ def scrape_zone_turf(url, progress_callback=None, cancel_check=None):
         from bs4 import BeautifulSoup
         import re
         
-        response = requests.get(url, timeout=10)
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=10)
         
         # Check for cancellation after second request
         if cancel_check and cancel_check():
