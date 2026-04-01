@@ -1986,13 +1986,31 @@ def _build_trott_analysis_payload(race_df: pd.DataFrame, composite_df: pd.DataFr
     summary_df = analyze_trotting_summary_prognosis(race_df, composite_df)
     if summary_df is None or summary_df.empty:
         return None
-    def _join_horses(df):
+
+    def _extract_horse_numbers(df):
         if df is None or df.empty:
             return ""
-        return "  ".join(df["Horse"].astype(str).tolist())
-    summary_text = _join_horses(summary_df[summary_df["Type"] == "SUMMARY"])
-    prognosis_text = _join_horses(summary_df[summary_df["Type"] == "PROGNOSIS"])
-    exclusive_text = _join_horses(summary_df[summary_df["Type"] == "EXCLUSIVES"])
+        if "N°" in df.columns:
+            values = df["N°"].astype(str).tolist()
+        elif "N" in df.columns:
+            values = df["N"].astype(str).tolist()
+        else:
+            values = df["Horse"].astype(str).tolist()
+
+        numbers = []
+        for val in values:
+            text = str(val).strip()
+            if not text or text == "-":
+                continue
+            # Keep only digits
+            digits = re.sub(r"\D+", "", text)
+            if digits:
+                numbers.append(digits)
+        return "  ".join(numbers)
+
+    summary_text = _extract_horse_numbers(summary_df[summary_df["Type"] == "SUMMARY"])
+    prognosis_text = _extract_horse_numbers(summary_df[summary_df["Type"] == "PROGNOSIS"])
+    exclusive_text = _extract_horse_numbers(summary_df[summary_df["Type"] == "EXCLUSIVES"])
     return {
         "race_df": race_df,
         "composite_df": composite_df,
@@ -2047,6 +2065,25 @@ def _analysis_pdf_bytes_trot(race_df: pd.DataFrame, composite_df: pd.DataFrame,
     story.append(Paragraph(metadata_text, styles['Normal']))
     story.append(Spacer(1, 6))
 
+    upset_text = ""
+    if isinstance(composite_df, pd.DataFrame) and not composite_df.empty and "FinalUpset" in composite_df.columns:
+        try:
+            upset_df = composite_df.dropna(subset=["FinalUpset"])
+            upset_df = upset_df[upset_df["FinalUpset"] != 0]
+            if not upset_df.empty:
+                upset_df = upset_df.nlargest(6, "FinalUpset")
+                num_col = _detect_horse_num_col(upset_df) or ("N°" if "N°" in upset_df.columns else "N")
+                labels = []
+                for _, row in upset_df.iterrows():
+                    num_val = row.get(num_col, row.get("N", ""))
+                    text = str(num_val).strip()
+                    digits = re.sub(r"\D+", "", text)
+                    if digits:
+                        labels.append(digits)
+                upset_text = "  ".join(labels)
+        except Exception:
+            upset_text = ""
+
     if composite_df is not None and not composite_df.empty:
         story.append(Paragraph("Classement des Chevaux (Score Composite)", header_style_custom))
         df_sorted = composite_df.sort_values('Composite', ascending=False)
@@ -2081,6 +2118,7 @@ def _analysis_pdf_bytes_trot(race_df: pd.DataFrame, composite_df: pd.DataFrame,
     sections = [
         ("Synthèse", summary_text),
         ("Pronostic", prognosis_text),
+        ("Chevaux au fort potentiel d'upset", upset_text),
         ("Exclusives", exclusive_text),
     ]
     for section_title, section_text in sections:
