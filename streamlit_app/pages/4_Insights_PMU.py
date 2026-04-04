@@ -1,5 +1,6 @@
 import os
 import streamlit as st
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="RaceX - Insights & PMU", page_icon="🧠", layout="wide")
 
@@ -68,3 +69,36 @@ st.markdown(
 - For large fields, prefer **top‑3 probability** over just win probability.
 """
 )
+
+st.markdown("---")
+st.header("Zone Turf Quinte du Jour")
+st.markdown(
+    """
+If Zone Turf provides a JavaScript embed snippet for the Quinte du Jour module, it can be rendered below using Streamlit components.
+Replace the placeholder HTML with the actual code from Zone Turf.
+"""
+)
+
+zone_turf_quinte_widget = """
+<div id=\"zone-turf-direct\">
+  <script language=\"javascript\" type=\"text/javascript\" src=\"https://www.zone-turf.fr/module/module_webmaster.php?e=partants\"></script>
+</div>
+<div id=\"zone-turf-fallback\" style=\"display:none; padding-top: 16px;\">
+  <div style=\"margin-bottom: 0.5rem; color: #555; font-size: 0.95rem;\">Direct script load failed — using iframe fallback.</div>
+  <iframe width=\"100%\" height=\"700\" frameborder=\"0\" scrolling=\"no\"
+    srcdoc=\"<html><body><script language='javascript' type='text/javascript' src='https://www.zone-turf.fr/module/module_webmaster.php?e=partants'></script></body></html>\">
+  </iframe>
+</div>
+<script>
+  window.setTimeout(function() {
+    var direct = document.querySelector('#zone-turf-direct');
+    if (direct && direct.innerHTML.trim() === '') {
+      direct.style.display = 'none';
+      var fallback = document.querySelector('#zone-turf-fallback');
+      if (fallback) fallback.style.display = 'block';
+    }
+  }, 1200);
+</script>
+"""
+
+components.html(zone_turf_quinte_widget, height=800, scrolling=True)
