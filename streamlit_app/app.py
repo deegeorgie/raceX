@@ -203,7 +203,7 @@ def show_df(df: pd.DataFrame, height: int = 400):
     if df is None or df.empty:
         st.info("No data available.")
     else:
-        st.dataframe(df, use_container_width=True, height=height)
+        st.dataframe(df, width="stretch", height=height)
 
 def _is_truthy_flag(val) -> bool:
     if isinstance(val, (bool, np.bool_)):
@@ -2300,7 +2300,7 @@ with st.sidebar:
     selected_date = st.date_input("Race Date", value=date.today())
 
     # Load meetings
-    if st.button("🔄 Load Meetings", use_container_width=True):
+    if st.button("🔄 Load Meetings", width="stretch"):
         with st.spinner("Fetching meetings…"):
             meetings = scrape_meeting_urls(selected_date)
         if meetings:
@@ -2438,7 +2438,7 @@ with st.sidebar:
                     )
 
     st.markdown("---")
-    if st.button("🚀 Scrape & Analyse", use_container_width=True, type="primary"):
+    if st.button("🚀 Scrape & Analyse", width="stretch", type="primary"):
         if not selected_url:
             st.error("Please select a meeting or enter a URL.")
         else:
@@ -2727,11 +2727,11 @@ with tab_comp:
                 res_t1 = st.session_state.get("mc_trot_comp_res")
                 if isinstance(res_t1, pd.DataFrame) and not res_t1.empty:
                     st.markdown("**Win / Top3 / Top5 Probabilities**")
-                    st.dataframe(res_t1, use_container_width=True, height=320)
+                    st.dataframe(res_t1, width="stretch", height=320)
                     top = res_t1.head(10).copy()
                     top["Horse"] = top["Cheval"].astype(str) + " (" + top["N°"].astype(str) + ")"
                     fig = px.bar(top, x="Horse", y="P(win)", title="Top 10 Win Probabilities (Trot)")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
             with st.expander("Method T2: Trot Metric Noise", expanded=False):
                 st.caption("Adds noise to trot-specific metrics and recomputes ranking.")
@@ -2783,11 +2783,11 @@ with tab_comp:
                 res_t2 = st.session_state.get("mc_trot_metric_res")
                 if isinstance(res_t2, pd.DataFrame) and not res_t2.empty:
                     st.markdown("**Win / Top3 / Top5 Probabilities**")
-                    st.dataframe(res_t2, use_container_width=True, height=320)
+                    st.dataframe(res_t2, width="stretch", height=320)
                     top = res_t2.head(10).copy()
                     top["Horse"] = top["Cheval"].astype(str) + " (" + top["N°"].astype(str) + ")"
                     fig = px.bar(top, x="Horse", y="P(win)", title="Top 10 Win Probabilities (Trot Metrics)")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
             with st.expander("Method T3: Odds vs Model (Monte Carlo)", expanded=False):
                 st.caption("Blends composite-based probabilities with odds-implied probabilities (trot).")
@@ -2814,11 +2814,11 @@ with tab_comp:
                 res_t3 = st.session_state.get("mc_trot_odds_res")
                 if isinstance(res_t3, pd.DataFrame) and not res_t3.empty:
                     st.markdown("**Model vs Odds vs Simulated Win%**")
-                    st.dataframe(res_t3, use_container_width=True, height=360)
+                    st.dataframe(res_t3, width="stretch", height=360)
                     top = res_t3.head(10).copy()
                     top["Horse"] = top["Cheval"].astype(str) + " (" + top["N°"].astype(str) + ")"
                     fig = px.bar(top, x="Horse", y="P(win_sim)", title="Top 10 Win Probabilities (Trot Blend)")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
             with st.expander("Method T4: Bet Portfolio EV (Monte Carlo)", expanded=False):
                 st.caption("Simulates winners from the blended model and evaluates ticket hit rate and EV (trot).")
@@ -2873,7 +2873,7 @@ with tab_comp:
                 res_t4 = st.session_state.get("mc_trot_bet_res")
                 if isinstance(res_t4, pd.DataFrame) and not res_t4.empty:
                     st.markdown("**Ticket EV (1 unit stake per ticket)**")
-                    st.dataframe(res_t4, use_container_width=True, height=320)
+                    st.dataframe(res_t4, width="stretch", height=320)
 
             with st.expander("Method T5: Scenario Analysis (Weights)", expanded=False):
                 st.caption("Randomly perturbs trot weights to see which horses stay strong across scenarios. DQ bias can emphasize low DQ risk.")
@@ -2901,11 +2901,11 @@ with tab_comp:
                 res_t5 = st.session_state.get("mc_trot_scen_res")
                 if isinstance(res_t5, pd.DataFrame) and not res_t5.empty:
                     st.markdown("**Scenario Robustness**")
-                    st.dataframe(res_t5, use_container_width=True, height=320)
+                    st.dataframe(res_t5, width="stretch", height=320)
                     top = res_t5.head(10).copy()
                     top["Horse"] = top["Cheval"].astype(str) + " (" + top["NÂ°"].astype(str) + ")"
                     fig = px.bar(top, x="Horse", y="P(win)", title="Top 10 Win Probabilities (Trot Scenario Mix)")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
             with st.expander("Method T6: Historical Similar Races", expanded=False):
                 st.caption("Uses historical races from same track and nearby distance to estimate win rates by odds bucket, then simulates winners (trot).")
@@ -2933,16 +2933,16 @@ with tab_comp:
                 res_t6 = st.session_state.get("mc_trot_hist_res")
                 if isinstance(res_t6, pd.DataFrame) and not res_t6.empty:
                     st.markdown("**Historical Win Probabilities**")
-                    st.dataframe(res_t6, use_container_width=True, height=320)
+                    st.dataframe(res_t6, width="stretch", height=320)
                     top = res_t6.head(10).copy()
                     top["Horse"] = top["Cheval"].astype(str) + " (" + top["NÂ°"].astype(str) + ")"
                     fig = px.bar(top, x="Horse", y="P(win_sim)", title="Top 10 Win Probabilities (Trot Historical)")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
                 bins_t6 = st.session_state.get("mc_trot_hist_bins")
                 if isinstance(bins_t6, pd.DataFrame) and not bins_t6.empty:
                     st.markdown("**Historical Odds Bin Stats**")
-                    st.dataframe(bins_t6, use_container_width=True, height=220)
+                    st.dataframe(bins_t6, width="stretch", height=220)
 
         if race_type == "flat":
             st.markdown("---")
@@ -2968,11 +2968,11 @@ with tab_comp:
                 res_1 = st.session_state.get("mc_comp_res")
                 if isinstance(res_1, pd.DataFrame) and not res_1.empty:
                     st.markdown("**Win / Top3 / Top5 Probabilities**")
-                    st.dataframe(res_1, use_container_width=True, height=320)
+                    st.dataframe(res_1, width="stretch", height=320)
                     top = res_1.head(10).copy()
                     top["Horse"] = top["Cheval"].astype(str) + " (" + top["N°"].astype(str) + ")"
                     fig = px.bar(top, x="Horse", y="P(win)", title="Top 10 Win Probabilities")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
             with st.expander("Method 2: Metric Noise (Recompute Composite)", expanded=False):
                 st.caption("Adds noise to normalized flat metrics and recomputes composite each trial. Useful to test ranking robustness to small data errors.")
@@ -3010,11 +3010,11 @@ with tab_comp:
                 res_2 = st.session_state.get("mc_metric_res")
                 if isinstance(res_2, pd.DataFrame) and not res_2.empty:
                     st.markdown("**Win / Top3 / Top5 Probabilities**")
-                    st.dataframe(res_2, use_container_width=True, height=320)
+                    st.dataframe(res_2, width="stretch", height=320)
                     top = res_2.head(10).copy()
                     top["Horse"] = top["Cheval"].astype(str) + " (" + top["N°"].astype(str) + ")"
                     fig = px.bar(top, x="Horse", y="P(win)", title="Top 10 Win Probabilities (Metrics)")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
             with st.expander("Method 3: Odds vs Model (Monte Carlo)", expanded=False):
                 st.caption("Blends model probabilities with odds-implied probabilities. Alpha controls how much you trust the model vs the market.")
@@ -3041,11 +3041,11 @@ with tab_comp:
                 res_3 = st.session_state.get("mc_odds_res")
                 if isinstance(res_3, pd.DataFrame) and not res_3.empty:
                     st.markdown("**Model vs Odds vs Simulated Win%**")
-                    st.dataframe(res_3, use_container_width=True, height=360)
+                    st.dataframe(res_3, width="stretch", height=360)
                     top = res_3.head(10).copy()
                     top["Horse"] = top["Cheval"].astype(str) + " (" + top["N°"].astype(str) + ")"
                     fig = px.bar(top, x="Horse", y="P(win_sim)", title="Top 10 Win Probabilities (Blend)")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
             with st.expander("Method 4: Bet Portfolio EV (Monte Carlo)", expanded=False):
                 st.caption("Simulates winners from the blended model and evaluates ticket hit rate and EV. Use generated Top‑K tickets or your last bets.")
@@ -3103,7 +3103,7 @@ with tab_comp:
                 res_4 = st.session_state.get("mc_bet_res")
                 if isinstance(res_4, pd.DataFrame) and not res_4.empty:
                     st.markdown("**Ticket EV (1 unit stake per ticket)**")
-                    st.dataframe(res_4, use_container_width=True, height=320)
+                    st.dataframe(res_4, width="stretch", height=320)
 
             with st.expander("Method 5: Scenario Analysis (Weights)", expanded=False):
                 st.caption("Randomly perturbs weight settings to see which horses stay strong across scenarios. Corde bias can emphasize draw advantage.")
@@ -3131,11 +3131,11 @@ with tab_comp:
                 res_5 = st.session_state.get("mc_scen_res")
                 if isinstance(res_5, pd.DataFrame) and not res_5.empty:
                     st.markdown("**Scenario Robustness**")
-                    st.dataframe(res_5, use_container_width=True, height=320)
+                    st.dataframe(res_5, width="stretch", height=320)
                     top = res_5.head(10).copy()
                     top["Horse"] = top["Cheval"].astype(str) + " (" + top["N°"].astype(str) + ")"
                     fig = px.bar(top, x="Horse", y="P(win)", title="Top 10 Win Probabilities (Scenario Mix)")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
             with st.expander("Method 6: Historical Similar Races", expanded=False):
                 st.caption("Uses historical races from same track and nearby distance to estimate win rates by odds bucket, then simulates winners.")
@@ -3163,16 +3163,16 @@ with tab_comp:
                 res_6 = st.session_state.get("mc_hist_res")
                 if isinstance(res_6, pd.DataFrame) and not res_6.empty:
                     st.markdown("**Historical Win Probabilities**")
-                    st.dataframe(res_6, use_container_width=True, height=320)
+                    st.dataframe(res_6, width="stretch", height=320)
                     top = res_6.head(10).copy()
                     top["Horse"] = top["Cheval"].astype(str) + " (" + top["N°"].astype(str) + ")"
                     fig = px.bar(top, x="Horse", y="P(win_sim)", title="Top 10 Win Probabilities (Historical)")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
                 bins_6 = st.session_state.get("mc_hist_bins")
                 if isinstance(bins_6, pd.DataFrame) and not bins_6.empty:
                     st.markdown("**Historical Odds Bin Stats**")
-                    st.dataframe(bins_6, use_container_width=True, height=220)
+                    st.dataframe(bins_6, width="stretch", height=220)
 
 
 # ── HEATMAP ──────────────────────────────────────────────────────────────────
@@ -3267,7 +3267,7 @@ with tab_heat:
                         if show_values:
                             fig.update_traces(text=mat.round(2).astype(str).values, texttemplate="%{text}")
                         fig.update_layout(title="Trotting Heatmap (0=Low, 1=High)")
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
         else:
             # Flat races: use composite_df numeric columns
             cheval_col = next((c for c in ["CHEVAL", "Cheval"] if c in composite_df.columns), None)
@@ -3343,7 +3343,7 @@ with tab_heat:
                         if show_values:
                             fig.update_traces(text=mat.round(2).astype(str).values, texttemplate="%{text}")
                         fig.update_layout(title="Horse Performance Heatmap (0=Low, 1=High)")
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
                         with st.expander("Export Heatmap", expanded=False):
                             if st.button("Prepare Heatmap Export", key="prep_heatmap_export"):
                                 # Plotly image export requires kaleido; guard if unavailable
@@ -3396,7 +3396,7 @@ if race_type == "trot":
                     if not part.empty:
                         labels = {"SUMMARY": "⭐ Top Contenders", "PROGNOSIS": "🔮 Predictions", "EXCLUSIVES": "❌ Avoid"}
                         st.markdown(f"<div style='background:{color};padding:8px;border-radius:4px;font-weight:bold'>{labels[section]}</div>", unsafe_allow_html=True)
-                        st.dataframe(part, use_container_width=True)
+                        st.dataframe(part, width="stretch")
 
     with tab_fit:
         st.subheader("Fitness (FA / FM)")
@@ -3456,7 +3456,7 @@ if race_type == "trot":
                 if combos:
                     bets_df = pd.DataFrame(combos, columns=[f"H{i+1}" for i in range(len(combos[0]))])
                     st.success(f"Generated {len(bets_df)} combinations")
-                    st.dataframe(bets_df, use_container_width=True)
+                    st.dataframe(bets_df, width="stretch")
                     st.session_state.last_bets_df = bets_df
                     st.session_state.last_bets_label = "trotting_bets"
                 else:
@@ -3585,7 +3585,7 @@ else:
                 if combos:
                     bets_df = pd.DataFrame(combos, columns=[f"H{i+1}" for i in range(len(combos[0]))])
                     st.success(f"Generated {len(bets_df)} combinations")
-                    st.dataframe(bets_df, use_container_width=True)
+                    st.dataframe(bets_df, width="stretch")
                     st.session_state.last_bets_df = bets_df
                     st.session_state.last_bets_label = "flat_bets"
                 else:
@@ -3660,9 +3660,9 @@ else:
                                 display_cols.append(c)
                         display_cols += [c for c in ["p_win", "p_place"] if c in pred_df.columns]
                         if display_cols:
-                            st.dataframe(pred_df[display_cols].sort_values("p_win", ascending=False), use_container_width=True)
+                            st.dataframe(pred_df[display_cols].sort_values("p_win", ascending=False), width="stretch")
                         else:
-                            st.dataframe(pred_df, use_container_width=True)
+                            st.dataframe(pred_df, width="stretch")
                     except Exception as e:
                         st.error(f"Inference failed: {e}")
 
@@ -3684,14 +3684,14 @@ else:
 
                     if not fi_win.empty:
                         st.markdown("Winner model")
-                        st.dataframe(fi_win.head(30), use_container_width=True)
+                        st.dataframe(fi_win.head(30), width="stretch")
                         st.bar_chart(fi_win.head(20).set_index("feature"))
                     else:
                         st.info("No feature importance available for winner model.")
 
                     if not fi_place.empty:
                         st.markdown("Place model")
-                        st.dataframe(fi_place.head(30), use_container_width=True)
+                        st.dataframe(fi_place.head(30), width="stretch")
                         st.bar_chart(fi_place.head(20).set_index("feature"))
                     else:
                         st.info("No feature importance available for place model.")
@@ -3758,14 +3758,14 @@ else:
 
                             if not shap_win.empty:
                                 st.markdown("Winner model")
-                                st.dataframe(shap_win.head(30), use_container_width=True)
+                                st.dataframe(shap_win.head(30), width="stretch")
                                 st.bar_chart(shap_win.head(20).set_index("feature"))
                             else:
                                 st.info("No SHAP summary available for winner model.")
 
                             if not shap_place.empty:
                                 st.markdown("Place model")
-                                st.dataframe(shap_place.head(30), use_container_width=True)
+                                st.dataframe(shap_place.head(30), width="stretch")
                                 st.bar_chart(shap_place.head(20).set_index("feature"))
                             else:
                                 st.info("No SHAP summary available for place model.")

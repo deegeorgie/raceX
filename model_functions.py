@@ -835,7 +835,14 @@ def read_html_flexible(source):
             try:
                 html_text = response.content.decode('latin-1', errors='replace')
                 return pd.read_html(html_text)
-            except Exception as e:
+            except Exception:
+                pass
+
+            # As a last resort, try html5lib if available
+            try:
+                import html5lib  # noqa: F401
+                return pd.read_html(response.text, flavor='html5lib')
+            except Exception:
                 raise
 
         # If source is a URL string, fetch it then call recursively

@@ -1,14 +1,15 @@
 # Streamlit UI
-streamlit==1.40.0
+streamlit==1.56.0
 
 # Data processing (same as main app)
-pandas==2.2.0
+pandas==2.3.3
 numpy==1.26.0
 
 # Web scraping
 requests==2.32.5
 beautifulsoup4==4.12.3
-lxml==5.0.0
+html5lib==1.1
+lxml==6.0.2
 
 # Plotting
 matplotlib==3.8.0
