@@ -63,7 +63,7 @@ def _show_df(df: pd.DataFrame, height: int = 400):
     if df is None or df.empty:
         st.info("No data available.")
     else:
-        st.dataframe(df, use_container_width=True, height=height)
+        st.dataframe(df, width="stretch", height=height)
 
 
 history_df = _load_flat_history()
@@ -154,16 +154,14 @@ col1, col2 = st.columns(2)
 with col1:
     if not odds.dropna().empty:
         fig = px.histogram(x=odds.dropna(), nbins=20, title="Odds Distribution")
-        fig.update_layout(xaxis_title="Odds", yaxis_title="Count")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.info("No odds data available.")
 with col2:
     dist_vals = _extract_distance_m(data_df)
     if not dist_vals.dropna().empty:
         fig = px.histogram(x=dist_vals.dropna(), nbins=20, title="Distance Distribution (m)")
-        fig.update_layout(xaxis_title="Distance (m)", yaxis_title="Count")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.info("No distance data available.")
 
@@ -190,12 +188,10 @@ if group_col:
         place_rate=("_place", "mean"),
     ).sort_values("rows", ascending=False).head(20)
     fig = px.bar(summary, x=summary.index.astype(str), y="avg_odds", title="Average Odds by Group")
-    fig.update_layout(xaxis_title=group_col, yaxis_title="Avg Odds")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     if summary["place_rate"].notna().any():
         fig = px.bar(summary, x=summary.index.astype(str), y="place_rate", title="Place Rate (Top 3) by Group")
-        fig.update_layout(xaxis_title=group_col, yaxis_title="Place Rate", yaxis=dict(range=[0, 1]))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 else:
     st.info("Grouping column not available in historical data.")
 
@@ -228,8 +224,7 @@ else:
                 else:
                     agg = df_plot.groupby("cat")["RANG"].mean().sort_values()
                     fig = px.bar(agg, x=agg.index, y=agg.values, title=f"Mean RANG by {factor} (Top 15)")
-                    fig.update_layout(xaxis_title=factor, yaxis_title="Mean RANG")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         else:
             x = _parse_numeric_series(data_df[factor])
             df_plot = pd.DataFrame({"x": x, "RANG": rang}).dropna()
@@ -248,12 +243,10 @@ else:
                         y_title = "Mean RANG"
                     bin_centers = [float(b.mid) for b in agg.index.categories]
                     fig = px.line(x=bin_centers, y=agg.values, markers=True, title=f"{y_title} vs {factor} (binned)")
-                    fig.update_layout(xaxis_title=factor, yaxis_title=y_title)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
                 except Exception:
                     fig = px.scatter(df_plot, x="x", y="RANG", opacity=0.3, title=f"RANG vs {factor}")
-                    fig.update_layout(xaxis_title=factor, yaxis_title="RANG")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
 st.markdown("**2D Outcome Heatmap**")
 numeric_factors = [c for c in ["COTE", "POIDS", "N_WEIGHT", "CORDE", "AGE"] if c in data_df.columns]
@@ -284,4 +277,5 @@ else:
         pivot_plot.index = pivot_plot.index.astype(str)
         pivot_plot.columns = pivot_plot.columns.astype(str)
         fig = px.imshow(pivot_plot, title=title, aspect="auto")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
+

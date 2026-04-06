@@ -21,9 +21,30 @@ import re
 import json
 from typing import Optional, List
 import time
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use("Agg")
+try:
+    import matplotlib.pyplot as plt
+    import matplotlib
+    matplotlib.use("Agg")
+    # Configure matplotlib for headless environments
+    plt.rcParams['font.family'] = 'DejaVu Sans'
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+    plt.rcParams['pdf.fonttype'] = 42
+    plt.rcParams['ps.fonttype'] = 42
+    # Disable matplotlib font cache to avoid permission issues
+    import matplotlib.font_manager
+    matplotlib.font_manager._load_fontmanager(try_read_cache=False)
+    # Set matplotlib data path to avoid issues with missing directories
+    import os
+    os.environ['MPLCONFIGDIR'] = '/tmp/matplotlib'
+    # Create the directory if it doesn't exist
+    import tempfile
+    temp_dir = tempfile.gettempdir()
+    mpl_dir = os.path.join(temp_dir, 'matplotlib')
+    os.makedirs(mpl_dir, exist_ok=True)
+    os.environ['MPLCONFIGDIR'] = mpl_dir
+except ImportError:
+    plt = None
+    matplotlib = None
 import plotly.express as px
 import requests
 from bs4 import BeautifulSoup
@@ -192,6 +213,10 @@ for key, default in {
     "flat_analysis": None,
     "prepared_trot_pdf": None,
     "prepared_trot_pdf_name": None,
+    "prepared_trot_bets_pdf": None,
+    "prepared_trot_bets_pdf_name": None,
+    "prepared_flat_bets_pdf": None,
+    "prepared_flat_bets_pdf_name": None,
     "mc_last_key": None,
 }.items():
     if key not in st.session_state:
@@ -2002,13 +2027,31 @@ def _build_trott_analysis_payload(race_df: pd.DataFrame, composite_df: pd.DataFr
             text = str(val).strip()
             if not text or text == "-":
                 continue
-            # Keep only digits
             digits = re.sub(r"\D+", "", text)
             if digits:
                 numbers.append(digits)
         return "  ".join(numbers)
 
-    summary_text = _extract_horse_numbers(summary_df[summary_df["Type"] == "SUMMARY"])
+    def _compose_summary_from_composite(df, count):
+        if df is None or df.empty or count <= 0:
+            return ""
+        num_col = _detect_horse_num_col(df) or ("N°" if "N°" in df.columns else "N")
+        sorted_df = df.sort_values("Composite", ascending=False)
+        top_df = sorted_df.head(count)
+        values = top_df[num_col].astype(str).tolist() if num_col in top_df.columns else []
+        numbers = []
+        for val in values:
+            text = str(val).strip()
+            if not text or text == "-":
+                continue
+            digits = re.sub(r"\D+", "", text)
+            if digits:
+                numbers.append(digits)
+        return "  ".join(numbers)
+
+    race_size = len(race_df)
+    half_len = 8 if race_size > 10 else max(3, int(np.ceil(race_size / 2)))
+    summary_text = _compose_summary_from_composite(composite_df, half_len)
     prognosis_text = _extract_horse_numbers(summary_df[summary_df["Type"] == "PROGNOSIS"])
     exclusive_text = _extract_horse_numbers(summary_df[summary_df["Type"] == "EXCLUSIVES"])
     return {
@@ -2088,7 +2131,7 @@ def _analysis_pdf_bytes_trot(race_df: pd.DataFrame, composite_df: pd.DataFrame,
         story.append(Paragraph("Classement des Chevaux (Score Composite)", header_style_custom))
         df_sorted = composite_df.sort_values('Composite', ascending=False)
         num_col = _detect_horse_num_col(df_sorted) or "N°"
-        table_data = [['Pos.', 'N°', 'Cheval', 'COTE', 'Score Composite']]
+        table_data = [['Pos.', 'N°', 'Cheval', 'COTE', 'Score']]
         for i, (_, row) in enumerate(df_sorted.iterrows(), 1):
             cote_val = row.get('COTE', row.get('Cote', ''))
             table_data.append([
@@ -2261,6 +2304,142 @@ def _analysis_pdf_bytes_flat(race_df: pd.DataFrame, composite_df: pd.DataFrame,
     doc.build(story)
     buf.seek(0)
     return buf.getvalue()
+
+
+def _bets_pdf_bytes(bets_df: pd.DataFrame, race_type: str, race_df: pd.DataFrame = None) -> bytes:
+    """Export bets DataFrame to PDF bytes for download."""
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER
+    except Exception as e:
+        raise ImportError(f"reportlab not available: {e}")
+
+    # Get race metadata
+    ref_course = ''
+    race_date = ''
+    prize_name = ''
+    hippodrome = ''
+
+    if race_df is not None and not race_df.empty:
+        ref_course = str(race_df['REF_COURSE'].iloc[0]) if 'REF_COURSE' in race_df.columns else ''
+        race_date = str(race_df['RACE_DATE'].iloc[0]) if 'RACE_DATE' in race_df.columns else ''
+        prize_name = str(race_df['PRIZE_NAME'].iloc[0]) if 'PRIZE_NAME' in race_df.columns else ''
+        hippodrome = str(race_df['HIPPODROME'].iloc[0]) if 'HIPPODROME' in race_df.columns else ''
+
+    header_text_racex, footer_text_racex, header_style, footer_style, _ = get_pdf_header_footer()
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=72, leftMargin=72, topMargin=100, bottomMargin=50)
+    story = []
+    styles = getSampleStyleSheet()
+
+    # Add RaceX header
+    story.append(Paragraph(header_text_racex, header_style))
+    story.append(Spacer(1, 12))
+
+    # Custom styles
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=14, spaceAfter=30, alignment=TA_CENTER)
+
+    # Header with race info
+    race_type_title = "Trotting" if race_type == "trot" else "Flat"
+    header_text = f"{race_type_title} Bets - {ref_course}"
+    story.append(Paragraph(header_text, title_style))
+
+    if prize_name:
+        story.append(Paragraph(f"Race: {prize_name}", styles['Normal']))
+    if hippodrome:
+        story.append(Paragraph(f"Hippodrome: {hippodrome}", styles['Normal']))
+    if race_date:
+        story.append(Paragraph(f"Date: {race_date}", styles['Normal']))
+    story.append(Spacer(1, 12))
+
+    # Convert DataFrame to list of lists for table
+    if bets_df is not None and not bets_df.empty:
+        # Get table data
+        rows = []
+        for _, row in bets_df.iterrows():
+            row_data = []
+            for col in bets_df.columns:
+                val = str(row[col]).strip()
+                if val.endswith('.0'):
+                    val = val[:-2]
+                row_data.append(val)
+            rows.append(row_data)
+
+        # Create combinations table in 3-column layout
+        num_combos = len(rows)
+        combos_per_col = (num_combos + 2) // 3  # Distribute combinations across 3 columns
+
+        # Build table data for 3-column layout
+        combo_data = []
+
+        # Create header row with column labels
+        header_cols = ["Combinations (1)", "Combinations (2)", "Combinations (3)"]
+        combo_data.append(header_cols)
+
+        # Fill rows with combinations
+        for row_idx in range(combos_per_col):
+            row_items = []
+
+            # Column 1
+            if row_idx < len(rows):
+                col1_text = " - ".join([str(x) for x in rows[row_idx] if x])
+                row_items.append(col1_text)
+            else:
+                row_items.append("")
+
+            # Column 2
+            if row_idx + combos_per_col < len(rows):
+                col2_text = " - ".join([str(x) for x in rows[row_idx + combos_per_col] if x])
+                row_items.append(col2_text)
+            else:
+                row_items.append("")
+
+            # Column 3
+            if row_idx + 2 * combos_per_col < len(rows):
+                col3_text = " - ".join([str(x) for x in rows[row_idx + 2 * combos_per_col] if x])
+                row_items.append(col3_text)
+            else:
+                row_items.append("")
+
+            combo_data.append(row_items)
+
+        combo_table = Table(combo_data, colWidths=[1.8*inch, 1.8*inch, 1.8*inch])
+        combo_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.darkgreen),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.lightcyan),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
+            ('TOPPADDING', (0, 1), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 8)
+        ]))
+        story.append(combo_table)
+
+        # Add summary
+        story.append(Spacer(1, 12))
+        story.append(Paragraph(f"<b>Total combinations:</b> {num_combos}", styles['Normal']))
+    else:
+        story.append(Paragraph("No bets data available.", styles['Normal']))
+
+    # Add RaceX footer
+    story.append(Spacer(1, 24))
+    story.append(Paragraph(footer_text_racex, footer_style))
+
+    # Build PDF
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
 
 
 def _sorted_prognosis_display(race_df: pd.DataFrame, composite_df: pd.DataFrame):
@@ -3462,6 +3641,45 @@ if race_type == "trot":
                 else:
                     st.warning("Could not generate combinations. Check race data.")
 
+            # PDF export for trotting bets (shown when bets are available)
+            if isinstance(st.session_state.last_bets_df, pd.DataFrame) and not st.session_state.last_bets_df.empty and st.session_state.last_bets_label == "trotting_bets":
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Prepare Trotting Bets PDF", key="prep_trot_bets_pdf"):
+                        try:
+                            pdf_bytes = _bets_pdf_bytes(st.session_state.last_bets_df, "trot", race_df)
+                            if pdf_bytes and len(pdf_bytes) > 0:
+                                st.session_state.prepared_trot_bets_pdf = pdf_bytes
+                                ref_course = str(race_df['REF_COURSE'].iloc[0]) if 'REF_COURSE' in race_df.columns else 'race'
+                                race_date = str(race_df['RACE_DATE'].iloc[0]) if 'RACE_DATE' in race_df.columns else ''
+                                date_clean = race_date.replace('/', '').replace('-', '') if race_date else ''
+                                st.session_state.prepared_trot_bets_pdf_name = f"{date_clean}_{ref_course}_trotting_bets.pdf" if date_clean else f"{ref_course}_trotting_bets.pdf"
+                                st.success(f"Trotting bets PDF prepared for download ({len(pdf_bytes)} bytes)")
+                            else:
+                                st.error("PDF generation returned empty content")
+                        except ImportError:
+                            st.error("ReportLab is required for PDF export. Install it with `pip install reportlab`.")
+                        except Exception as e:
+                            st.error(f"PDF preparation failed: {e}")
+                            st.code(str(e))
+
+                    if st.session_state.get("prepared_trot_bets_pdf"):
+                        st.download_button(
+                            "Download Trotting Bets PDF",
+                            data=st.session_state.prepared_trot_bets_pdf,
+                            file_name=st.session_state.get("prepared_trot_bets_pdf_name", "trotting_bets.pdf"),
+                            mime="application/pdf",
+                            key="download_trot_bets_pdf"
+                        )
+                with col2:
+                    st.download_button(
+                        "Download Bets (CSV)",
+                        data=_df_to_csv_bytes(st.session_state.last_bets_df),
+                        file_name="trotting_bets.csv",
+                        mime="text/csv",
+                        key="download_trot_bets_csv"
+                    )
+
 
 # ── FLAT TABS ─────────────────────────────────────────────────────────────────
 else:
@@ -3591,9 +3809,47 @@ else:
                 else:
                     st.warning("Could not generate combinations.")
 
+            # PDF export for flat bets (shown when bets are available)
+            if isinstance(st.session_state.last_bets_df, pd.DataFrame) and not st.session_state.last_bets_df.empty and st.session_state.last_bets_label == "flat_bets":
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Prepare Flat Bets PDF", key="prep_flat_bets_pdf"):
+                        try:
+                            pdf_bytes = _bets_pdf_bytes(st.session_state.last_bets_df, "flat", race_df)
+                            if pdf_bytes and len(pdf_bytes) > 0:
+                                st.session_state.prepared_flat_bets_pdf = pdf_bytes
+                                ref_course = str(race_df['REF_COURSE'].iloc[0]) if 'REF_COURSE' in race_df.columns else 'race'
+                                race_date = str(race_df['RACE_DATE'].iloc[0]) if 'RACE_DATE' in race_df.columns else ''
+                                date_clean = race_date.replace('/', '').replace('-', '') if race_date else ''
+                                st.session_state.prepared_flat_bets_pdf_name = f"{date_clean}_{ref_course}_flat_bets.pdf" if date_clean else f"{ref_course}_flat_bets.pdf"
+                                st.success(f"Flat bets PDF prepared for download ({len(pdf_bytes)} bytes)")
+                            else:
+                                st.error("PDF generation returned empty content")
+                        except ImportError:
+                            st.error("ReportLab is required for PDF export. Install it with `pip install reportlab`.")
+                        except Exception as e:
+                            st.error(f"PDF preparation failed: {e}")
+                            st.code(str(e))
+
+                    if st.session_state.get("prepared_flat_bets_pdf"):
+                        st.download_button(
+                            "Download Flat Bets PDF",
+                            data=st.session_state.prepared_flat_bets_pdf,
+                            file_name=st.session_state.get("prepared_flat_bets_pdf_name", "flat_bets.pdf"),
+                            mime="application/pdf",
+                            key="download_flat_bets_pdf"
+                        )
+                with col2:
+                    st.download_button(
+                        "Download Bets (CSV)",
+                        data=_df_to_csv_bytes(st.session_state.last_bets_df),
+                        file_name="flat_bets.csv",
+                        mime="text/csv",
+                        key="download_flat_bets_csv"
+                    )
+
     with tab_model:
         st.subheader("CatBoost Training & Inference (Flat)")
-        st.caption("Training uses historical data from the DB. Inference uses the currently loaded race.")
         if CatBoostClassifier is None or train_test_split is None:
             st.error("CatBoost and scikit-learn are required. Install with `pip install catboost scikit-learn`.")
         else:

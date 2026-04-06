@@ -1,7 +1,7 @@
-import os
+﻿import os
 import streamlit as st
 
-st.set_page_config(page_title="RaceX - Dictionary", page_icon="📘", layout="wide")
+st.set_page_config(page_title="RaceX - Dictionary", page_icon="ðŸ“˜", layout="wide")
 
 st.markdown(
     """
@@ -13,19 +13,19 @@ st.markdown(
 )
 
 with st.sidebar:
-    st.title("🏇 RaceX")
+    st.title("ðŸ‡ RaceX")
     st.markdown("---")
     st.subheader("Pages")
-    st.page_link("app.py", label="Race Analysis", icon="🏇")
-    st.page_link("pages/1_History_Analysis.py", label="History & Analysis", icon="📊")
-    st.page_link("pages/3_Dictionary.py", label="Dictionary", icon="📘")
-    st.page_link("pages/4_Insights_PMU.py", label="Insights & PMU", icon="🧠")
-    st.page_link("pages/2_About.py", label="About", icon="ℹ️")
+    st.page_link("app.py", label="Race Analysis", icon="ðŸ‡")
+    st.page_link("pages/1_History_Analysis.py", label="History & Analysis", icon="ðŸ“Š")
+    st.page_link("pages/3_Dictionary.py", label="Dictionary", icon="ðŸ“˜")
+    st.page_link("pages/4_Insights_PMU.py", label="Insights & PMU", icon="ðŸ§ ")
+    st.page_link("pages/2_About.py", label="About", icon="â„¹ï¸")
 
-st.title("📘 Racing, Data, and ML Dictionary")
+st.title("ðŸ“˜ Racing, Data, and ML Dictionary")
 
 img_path = os.path.join(os.path.dirname(__file__), "..", "assets", "vincennes.jpg")
-st.image(img_path, caption="Vincennes (placeholder)", use_container_width=True)
+st.image(img_path, caption="Vincennes (placeholder)", width="stretch")
 
 st.markdown("**Racing Concepts**")
 st.markdown(
@@ -63,10 +63,11 @@ st.markdown(
 st.markdown("**Data & ML Concepts**")
 st.markdown(
     """
-- **Normalization**: Transforming values to a common scale (0–1).
+- **Normalization**: Transforming values to a common scale (0â€“1).
 - **Correlation**: Measures how strongly two variables move together.
 - **Monte Carlo**: Random simulation to estimate probabilities.
 - **Overfitting**: A model fits noise rather than signal.
 - **Calibration**: Whether predicted probabilities match observed outcomes.
 """
 )
+
