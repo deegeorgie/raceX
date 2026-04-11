@@ -1,9 +1,9 @@
 # Streamlit UI
-streamlit==1.56.0
+streamlit==1.60.0
 
 # Data processing (same as main app)
-pandas==2.3.3
-numpy==1.26.0
+pandas==2.4.4
+numpy==2.4.4
 
 # Web scraping
 requests==2.33.2
